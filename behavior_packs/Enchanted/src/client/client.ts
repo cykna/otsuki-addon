@@ -56,6 +56,7 @@ export class EnchantedClient {
 
   private finalize_request(id: number) {
     system.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
+    this.request_idx--;
   }
 
   /**

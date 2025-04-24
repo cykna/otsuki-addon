@@ -605,6 +605,7 @@ class EnchantedClient {
   }
   finalize_request(id) {
     system2.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
+    this.request_idx--;
   }
   send_raw(data) {
     if (this.config.target)
@@ -639,7 +640,8 @@ class EnchantedServer extends EnchantedClient {
       throw new Error("No Server is running to send a response. Error on server implementation");
     const decompressed = import_lz_string2.decompress(request);
     yield system3.sendScriptEvent("enchanted:response", target);
-    yield* this.send_response(this.running_server.handle_request(decompressed, target, id), target, id);
+    const response = this.running_server.handle_request(decompressed, target, id);
+    yield* this.send_response(response, target, id);
     yield system3.sendScriptEvent("enchanted:response_end", `${target}\x01${id}`);
   }
   static requests = new Map;
@@ -690,7 +692,7 @@ class RouteServer extends EnchantedServer {
     if (obj.route == "/" && this.routes.has("/")) {
       return {
         error: false,
-        value: this.routes.get("/").route?.([], target, id, new Map)
+        value: this.routes.get("/").route?.(obj.content, [], target, id, new Map)
       };
     }
     const pathname = obj.route.split("/");
@@ -711,22 +713,19 @@ class RouteServer extends EnchantedServer {
     if (!last?.route) {
       return new ErrorResponse(new Error("Not a valid route named: " + obj.route));
     }
+    const value = last.route(obj.content, params, target, id, new Map);
     return {
       error: false,
-      value: last.route(params, target, id, new Map)
+      value
     };
   }
 }
 
 // src/main.ts
-world3.afterEvents.worldLoad.subscribe((e) => {
-  world3.setDynamicProperty(Math.random().toString(), Math.random());
-});
 new RouteServer({
   uuid: "enchanted",
   piece_len: 2048
 }).route("/", () => {
   world3.sendMessage("Vai pro cacete");
-}).route("/seugay", () => {
-  world3.sendMessage("É você que é");
-});
+  return "que raiva";
+}).route("/seugay", (content) => 24).route("/peloamor", () => 69);

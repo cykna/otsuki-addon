@@ -9,12 +9,15 @@ const client = new EnchantedClient({
 
 world.afterEvents.worldLoad.subscribe(e => {
   client.send_object({
-    route: "/"
+    route: "/",
   });
 })
 
 world.afterEvents.playerBreakBlock.subscribe(e => {
   client.send_object({
-    route: "/seugay"
-  });
+    route: "/peloamor",
+    content: {
+      seu: "corno"
+    }
+  }).then(e => console.log(JSON.stringify(e)));
 })

@@ -30,7 +30,8 @@ export class EnchantedServer extends EnchantedClient {
     const decompressed = decompress(request);
 
     yield system.sendScriptEvent("enchanted:response", target); //initializes the response caching on the client
-    yield* this.send_response(this.running_server.handle_request(decompressed, target, id), target, id);
+    const response = this.running_server.handle_request(decompressed, target, id);
+    yield* this.send_response(response, target, id);
     yield system.sendScriptEvent("enchanted:response_end", `${target}\x01${id}`);
 
   }

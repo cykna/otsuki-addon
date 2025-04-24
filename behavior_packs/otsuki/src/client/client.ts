@@ -13,7 +13,7 @@ export interface RequestConfig {
 export class EnchantedClient {
 
   private request_idx = 0;
-  private responses: string[] = [];
+  private responses: string[] = []; //todo: Modify this for hashmaps
   private ok_promises: ((value: any) => any)[] = [];
 
   constructor(private config: RequestConfig) {
@@ -27,7 +27,9 @@ export class EnchantedClient {
         const splitted = e.message.split('\x01');
         if (splitted[0] == this.config.uuid) {
           const decompressed = decompress(this.responses[splitted[1]]);
+          console.log(decompressed, splitted[1]);
           this.ok_promises[splitted[1]](decompressed);
+          this.ok_promises.splice(splitted[1], 1);
           this.handle_response(decompressed, parseInt(splitted[1]));
         }
       } else if (e.id == "enchanted:request_reset" && this.config.uuid == e.message) {
@@ -47,8 +49,9 @@ export class EnchantedClient {
   private * make_request(content: string) {
     const header = `${this.config.uuid}\x01${this.config.target}\x01${this.request_idx}\x01`;
     const splitlen = Math.min(this.config.piece_len, 2048) - header.length;
-    const id = this.request_idx;
+
     const compressed = compress(content);
+    const id = this.request_idx;
     this.initialize_request();
     for (let i = 0, j = compressed.length; i < j; i += splitlen) yield system.sendScriptEvent("enchanted:request_data", header + compressed.substring(i, i + Math.min(splitlen, j - i)));
     this.finalize_request(id);
@@ -56,6 +59,8 @@ export class EnchantedClient {
 
   private finalize_request(id: number) {
     system.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
+    this.request_idx--;
+    this.responses.pop();
   }
 
   /**

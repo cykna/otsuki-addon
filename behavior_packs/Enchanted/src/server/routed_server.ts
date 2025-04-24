@@ -2,14 +2,15 @@ import { RequestConfig } from "../client/client";
 import { EnchantedResponse, ErrorResponse } from "./Response";
 import { EnchantedServer } from "./server";
 
-export type RouteFn = (param: string[], client: string, req_id: number, queries: Map<string, string>) => any;
+export type RouteFn = <T>(value: T, param: string[], client: string, req_id: number, queries: Map<string, string>) => any;
 export interface Routing {
   route?: RouteFn,
   subroutes: Map<string, Routing>,
 }
 
-export interface RoutedRequest {
+export interface RoutedRequest<T> {
   route: string;
+  content: T
 }
 
 export class RouteServer extends EnchantedServer {
@@ -38,11 +39,11 @@ export class RouteServer extends EnchantedServer {
     return this;
   }
 
-  handle(obj: RoutedRequest, target: string, id: number): EnchantedResponse<any> {
+  handle<T>(obj: RoutedRequest<T>, target: string, id: number): EnchantedResponse<any> {
     if (obj.route == "/" && this.routes.has("/")) {
       return {
         error: false,
-        value: this.routes.get("/")!.route?.([], target, id, new Map)
+        value: this.routes.get("/")!.route?.(obj.content, [], target, id, new Map)
       }
     }
     const pathname = obj.route.split('/');
@@ -65,10 +66,11 @@ export class RouteServer extends EnchantedServer {
     if (!last?.route) {
       return new ErrorResponse(new Error("Not a valid route named: " + obj.route))
     };
+    const value = last.route(obj.content, params, target, id, new Map);
 
     return {
       error: false,
-      value: last.route(params, target, id, new Map)
+      value
     }
   }
 }
