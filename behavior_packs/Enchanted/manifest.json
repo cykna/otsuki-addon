@@ -1,0 +1,49 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Enchanted",
+    "description": "An auxiliary addon",
+    "uuid": "010c9443-4b6d-4d5b-919a-8d04503c8ef6",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      70
+    ]
+  },
+  "modules": [
+    {
+      "uuid": "7c3ddc0c-f52d-43e2-963b-4c602c9d3cd2",
+      "description": "by Quriosen",
+      "type": "data",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "uuid": "cc1e3cae-07f7-496d-8954-d50f34356ec4",
+      "description": "by Quriosen",
+      "type": "script",
+      "language": "javascript",
+      "entry": "scripts/main.js",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0-beta"
+    }
+  ],
+  "capabilities": []
+}

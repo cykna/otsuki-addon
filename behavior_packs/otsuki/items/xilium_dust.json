@@ -1,0 +1,17 @@
+{
+    "format_version": "1.21.70",
+    "minecraft:item": {
+        "description": {
+            "identifier": "otsuki:xilium_dust",
+            "menu_category": {
+                "category": "items"
+            }
+        },
+        "components": {
+            "minecraft:icon": "xilium_dust",
+            "minecraft:display_name": {
+                "value": "Xilium Dust"
+            }
+        }
+    }
+}

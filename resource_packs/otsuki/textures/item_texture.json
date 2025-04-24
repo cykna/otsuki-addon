@@ -1,0 +1,18 @@
+{
+    "texture_name": "atlas.items",
+    "resource_pack_name": "Otsuki",
+    "texture_data": {
+        "xilium_dust": {
+            "textures": "textures/items/xilium_dust"
+        },
+        "xilium_plate": {
+            "textures": "textures/items/xilium_plate"
+        },
+        "xilium_ingot": {
+            "textures": "textures/items/xilium_ingot"
+        },
+        "xilium_core": {
+            "textures": "textures/items/xilium_core"
+        }
+    }
+}

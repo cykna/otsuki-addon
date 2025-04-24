@@ -1,0 +1,32 @@
+{
+    "format_version": 2,
+    "header": {
+        "name": "Otsuki",
+        "description": "made by quriosen",
+        "uuid": "01965f8c-9fd0-7001-89de-8d90a46e2e76",
+        "version": [
+            1,
+            0,
+            0
+        ],
+        "min_engine_version": [
+            1,
+            21,
+            70
+        ]
+    },
+    "modules": [
+        {
+            "uuid": "01965f8c-9fd0-7004-8fbc-abe8015ac756",
+            "type": "resources",
+            "description": "Made with Enchanted, by Quriosen",
+            "version": [
+                1,
+                0,
+                0
+            ]
+        }
+    ],
+    "dependencies": [],
+    "capabilities": []
+}
