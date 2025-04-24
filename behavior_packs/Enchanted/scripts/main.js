@@ -15,6 +15,16 @@ var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __legacyDecorateClassTS = function(decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
+    r = Reflect.decorate(decorators, target, key, desc);
+  else
+    for (var i = decorators.length - 1;i >= 0; i--)
+      if (d = decorators[i])
+        r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
 
 // ../../../../node_modules/lz-string/libs/lz-string.js
 var require_lz_string = __commonJS((exports, module) => {
@@ -477,77 +487,246 @@ var require_lz_string = __commonJS((exports, module) => {
   }
 });
 
-// src/server/server.ts
-var import_lz_string = __toESM(require_lz_string(), 1);
-import { system } from "@minecraft/server";
+// src/main.ts
+import { world as world3 } from "@minecraft/server";
 
-class EnchantedServer {
-  uuid;
+// src/server/Response.ts
+class ErrorResponse {
+  value;
+  error = true;
+  constructor(value) {
+    this.value = value;
+  }
+  toJSON() {
+    return {
+      error: true,
+      value: this.value.toString()
+    };
+  }
+}
+
+// src/server/server.ts
+var import_lz_string2 = __toESM(require_lz_string(), 1);
+import { system as system3 } from "@minecraft/server";
+
+// src/server/decorators.ts
+import { system } from "@minecraft/server";
+function ImplEnchantedServer(constructor) {
+  system.afterEvents.scriptEventReceive.subscribe((e) => {
+    switch (e.id) {
+      case "enchanted:request": {
+        const split = e.message.split("\x01");
+        if (split[1] == constructor.running_server?.config.uuid)
+          if (constructor.requests.has(split[0])) {
+            constructor.requests.get(split[0]).push({ content: "", finalized: false });
+          } else {
+            constructor.requests.set(split[0], [{ content: "", finalized: false }]);
+          }
+        break;
+      }
+      case "enchanted:request_data": {
+        const splitted = e.message.split("\x01");
+        if (splitted[1] != constructor.running_server?.config.uuid)
+          return;
+        const first = splitted[0];
+        if (!constructor.requests.has(first))
+          throw new Error(`Not a recognized uuid: ${first}`);
+        if (constructor.running_server?.config.uuid != splitted[1])
+          break;
+        const idx = parseInt(splitted[2]);
+        constructor.requests.get(first)[idx].content += splitted[3];
+        break;
+      }
+      case "enchanted:finalize_request": {
+        const splitted = e.message.split("\x01");
+        if (constructor.running_server?.config.uuid != splitted[1])
+          return;
+        const first = splitted[0];
+        const idx = parseInt(splitted[2]);
+        const request = constructor.requests.get(first);
+        if (!request)
+          throw new Error(`Not a recognized uuid: ${first}`);
+        system.runJob(constructor.handle(request[idx].content, first, idx));
+        request[idx].finalized = true;
+        if (request.every((e2) => e2.finalized)) {
+          constructor.requests.delete(first);
+          constructor.request_reset_index(first);
+        }
+        break;
+      }
+    }
+  });
+}
+
+// src/client/client.ts
+var import_lz_string = __toESM(require_lz_string(), 1);
+import { system as system2, world } from "@minecraft/server";
+
+class EnchantedClient {
+  config;
+  request_idx = 0;
+  responses = [];
+  ok_promises = [];
+  constructor(config) {
+    this.config = config;
+    system2.afterEvents.scriptEventReceive.subscribe((e) => {
+      if (e.id == "enchanted:response") {
+        if (e.message == this.config.uuid)
+          this.responses.push("");
+      } else if (e.id == "enchanted:response_data") {
+        const splitted = e.message.split("\x01");
+        if (splitted[0] == this.config.uuid)
+          this.responses[splitted[1]] += splitted[2];
+      } else if (e.id == "enchanted:response_end") {
+        const splitted = e.message.split("\x01");
+        if (splitted[0] == this.config.uuid) {
+          const decompressed = import_lz_string.decompress(this.responses[splitted[1]]);
+          this.ok_promises[splitted[1]](decompressed);
+          this.handle_response(decompressed, parseInt(splitted[1]));
+        }
+      } else if (e.id == "enchanted:request_reset" && this.config.uuid == e.message) {
+        this.request_idx = 0;
+      }
+    });
+  }
+  initialize_request() {
+    this.request_idx++;
+    system2.sendScriptEvent("enchanted:request", this.config.uuid + "\x01" + this.config.target);
+  }
+  *make_request(content) {
+    const splitlen = Math.min(this.config.piece_len, 2048);
+    const header = `${this.config.uuid}\x01${this.config.target}\x01${this.request_idx}\x01`;
+    const id = this.request_idx;
+    const compressed = import_lz_string.compress(content);
+    this.initialize_request();
+    for (let i = 0, j = compressed.length;i < j; i += splitlen)
+      yield system2.sendScriptEvent("enchanted:request_data", header + compressed.substring(i, i + Math.min(splitlen, j - i)));
+    this.finalize_request(id);
+  }
+  finalize_request(id) {
+    system2.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
+  }
+  send_raw(data) {
+    if (this.config.target)
+      return new Promise((ok, err) => {
+        this.ok_promises[this.request_idx] = ok;
+        system2.runJob(this.make_request(data));
+      });
+    return new Promise((_, err) => err(new Error("Client does not have a target")));
+  }
+  async send_object(obj) {
+    return JSON.parse(await this.send_raw(JSON.stringify(obj)));
+  }
+  handle_response(content, id) {
+    world.sendMessage("Received: " + content + " from id: " + id);
+  }
+}
+
+// src/server/server.ts
+class EnchantedServer extends EnchantedClient {
   static running_server = null;
   static request_reset_index(uuid) {
-    system.sendScriptEvent("enchanted:request_reset", uuid);
+    system3.sendScriptEvent("enchanted:request_reset", uuid);
   }
   static *send_response(req, target, id) {
-    const compressed = import_lz_string.compress(req);
+    const compressed = import_lz_string2.compress(req);
     const header = `${target}\x01${id}\x01`;
     for (let i = 0, j = compressed.length;i < j; i += 2048)
-      yield system.sendScriptEvent("enchanted:response_data", header + compressed.substring(i, i + Math.min(2048, j - i)));
+      yield system3.sendScriptEvent("enchanted:response_data", header + compressed.substring(i, i + Math.min(2048, j - i)));
   }
   static *handle(request, target, id) {
     if (this.running_server == null)
       throw new Error("No Server is running to send a response. Error on server implementation");
-    const decompressed = import_lz_string.decompress(request);
-    yield system.sendScriptEvent("enchanted:response", target);
+    const decompressed = import_lz_string2.decompress(request);
+    yield system3.sendScriptEvent("enchanted:response", target);
     yield* this.send_response(this.running_server.handle_request(decompressed, target, id), target, id);
-    yield system.sendScriptEvent("enchanted:response_end", `${target}\x01${id}`);
+    yield system3.sendScriptEvent("enchanted:response_end", `${target}\x01${id}`);
   }
   static requests = new Map;
-  static {
-    system.afterEvents.scriptEventReceive.subscribe((e) => {
-      switch (e.id) {
-        case "enchanted:request": {
-          if (this.requests.has(e.message)) {
-            this.requests.get(e.message).push({ content: "", finalized: false });
-          } else {
-            this.requests.set(e.message, [{ content: "", finalized: false }]);
-          }
-          break;
-        }
-        case "enchanted:request_data": {
-          const splitted = e.message.split("\x01");
-          const first = splitted[0];
-          if (!this.requests.has(first))
-            throw new Error(`Not a recognized uuid: ${first}`);
-          const idx = parseInt(splitted[1]);
-          this.requests.get(first)[idx].content += splitted[2];
-          break;
-        }
-        case "enchanted:finalize_request": {
-          const splitted = e.message.split("\x01");
-          const first = splitted[0];
-          const idx = parseInt(splitted[1]);
-          const request = this.requests.get(first);
-          if (!request)
-            throw new Error(`Not a recognized uuid: ${first}`);
-          system.runJob(EnchantedServer.handle(request[idx].content, first, idx));
-          request[idx].finalized = true;
-          if (request.every((e2) => e2.finalized)) {
-            this.requests.delete(first);
-            this.request_reset_index(first);
-          }
-          break;
-        }
-      }
-    });
-  }
-  constructor(uuid) {
-    this.uuid = uuid;
+  constructor(config) {
+    super(config);
     EnchantedServer.running_server = this;
   }
-  handle_request(req, target, id) {
-    return "brejo";
+  handle_request(req, client, req_id) {
+    const data = this.handle(JSON.parse(req), client, req_id);
+    return JSON.stringify(data);
+  }
+  handle(obj, client, req_id) {
+    return "Todo! Enchanted Server default handle function is meant to be overwritten";
+  }
+}
+EnchantedServer = __legacyDecorateClassTS([
+  ImplEnchantedServer
+], EnchantedServer);
+
+// src/server/routed_server.ts
+class RouteServer extends EnchantedServer {
+  routes = new Map;
+  constructor(config) {
+    super(config);
+  }
+  route(route, fn) {
+    if (route == "/")
+      return this.routes.set("/", {
+        route: fn,
+        subroutes: new Map
+      }), this;
+    const split = route.split("/");
+    split.shift();
+    const last = split.pop();
+    let current = this.routes;
+    for (const path of split) {
+      current.set(path, {
+        subroutes: current = new Map
+      });
+    }
+    current.set(last, {
+      subroutes: new Map,
+      route: fn
+    });
+    return this;
+  }
+  handle(obj, target, id) {
+    if (obj.route == "/" && this.routes.has("/")) {
+      return {
+        error: false,
+        value: this.routes.get("/").route?.([], target, id, new Map)
+      };
+    }
+    const pathname = obj.route.split("/");
+    pathname.shift();
+    let lastpath = pathname.pop();
+    let current = this.routes;
+    const params = [];
+    for (const path of pathname) {
+      if (current.has(path))
+        current = current.get(path).subroutes;
+      else if (current.has("dynroute")) {
+        current = current.get("dynroute").subroutes;
+      } else {
+        return new ErrorResponse(new Error("Not a valid route named: " + obj.route));
+      }
+    }
+    const last = current.get(lastpath) ?? (current.has("dynroute") && params.push(lastpath), current.get("dynroute"));
+    if (!last?.route) {
+      return new ErrorResponse(new Error("Not a valid route named: " + obj.route));
+    }
+    return {
+      error: false,
+      value: last.route(params, target, id, new Map)
+    };
   }
 }
 
 // src/main.ts
-new EnchantedServer("enchanted");
+world3.afterEvents.worldLoad.subscribe((e) => {
+  world3.setDynamicProperty(Math.random().toString(), Math.random());
+});
+new RouteServer({
+  uuid: "enchanted",
+  piece_len: 2048
+}).route("/", () => {
+  world3.sendMessage("Vai pro cacete");
+}).route("/seugay", () => {
+  world3.sendMessage("É você que é");
+});

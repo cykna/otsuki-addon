@@ -1,19 +1,20 @@
 import { system, world } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
+import { ImplEnchantedServer } from "./decorators";
+import { EnchantedClient, RequestConfig } from "../client/client";
 
 export interface EnchantedRequest {
   content: string;
   finalized: boolean
 };
 
-export interface ServerRequest {
-  route: string;
-  target_uuid: string;
-}
 type uuid = string;
-export class EnchantedServer {
+
+@ImplEnchantedServer
+export class EnchantedServer extends EnchantedClient {
   static running_server: EnchantedServer | null = null;
-  private static request_reset_index(uuid: string) {
+
+  static request_reset_index(uuid: string) {
     system.sendScriptEvent("enchanted:request_reset", uuid);
   }
 
@@ -35,46 +36,15 @@ export class EnchantedServer {
   }
   static requests: Map<uuid, EnchantedRequest[]> = new Map;
 
-  static {
-    system.afterEvents.scriptEventReceive.subscribe(e => {
-      switch (e.id) {
-        case 'enchanted:request': { //"/scriptevent enchanted:request uuid"
-          if (this.requests.has(e.message)) {
-            this.requests.get(e.message)!.push({ content: "", finalized: false });
-          } else {
-            this.requests.set(e.message, [{ content: "", finalized: false }]);
-          }
-          break;
-        }
-        case 'enchanted:request_data': {
-          const splitted = e.message.split("\x01"); //Expects to follow the pattern uuid\1id\content
-          const first = splitted[0];
-          if (!this.requests.has(first)) throw new Error(`Not a recognized uuid: ${first}`);
-          const idx = parseInt(splitted[1]);
-          this.requests.get(first)![idx].content += splitted[2];
-          break;
-        }
-        case 'enchanted:finalize_request': {
-          const splitted = e.message.split("\x01");
-          const first = splitted[0];
-          const idx = parseInt(splitted[1]);
-          const request = this.requests.get(first);
-          if (!request) throw new Error(`Not a recognized uuid: ${first}`);
-          system.runJob(EnchantedServer.handle(request[idx].content, first, idx));
-          request[idx].finalized = true;
-          if (request.every(e => e.finalized)) {
-            this.requests.delete(first);
-            this.request_reset_index(first);
-          }
-          break;
-        }
-      }
-    });
-  };
-  constructor(public readonly uuid: string) {
+  constructor(config: RequestConfig) {
+    super(config);
     EnchantedServer.running_server = this;
   }
-  handle_request(req: string, target: string, id: number) {
-    return "brejo";
+  handle_request(req: string, client: string, req_id: number) {
+    const data = this.handle(JSON.parse(req), client, req_id);
+    return JSON.stringify(data);
+  }
+  handle(obj: any, client: string, req_id: number): any {
+    return "Todo! Enchanted Server default handle function is meant to be overwritten"
   }
 }

@@ -482,47 +482,42 @@ import { world as world2 } from "@minecraft/server";
 
 // src/client/client.ts
 var import_lz_string = __toESM(require_lz_string(), 1);
-import { system, world } from "@minecraft/server";
+import { system } from "@minecraft/server";
 
 class EnchantedClient {
-  uuid;
-  configs = {
-    piece_len: 1024
-  };
+  config;
   request_idx = 0;
   responses = [];
-  constructor(uuid) {
-    this.uuid = uuid;
+  ok_promises = [];
+  constructor(config) {
+    this.config = config;
     system.afterEvents.scriptEventReceive.subscribe((e) => {
       if (e.id == "enchanted:response") {
-        if (e.message == this.uuid)
+        if (e.message == this.config.uuid)
           this.responses.push("");
       } else if (e.id == "enchanted:response_data") {
         const splitted = e.message.split("\x01");
-        if (splitted[0] == this.uuid)
+        if (splitted[0] == this.config.uuid)
           this.responses[splitted[1]] += splitted[2];
       } else if (e.id == "enchanted:response_end") {
         const splitted = e.message.split("\x01");
-        if (splitted[0] == this.uuid) {
+        if (splitted[0] == this.config.uuid) {
           const decompressed = import_lz_string.decompress(this.responses[splitted[1]]);
-          this.handle_request(decompressed, parseInt(splitted[1]));
+          this.ok_promises[splitted[1]](decompressed);
+          this.handle_response(decompressed, parseInt(splitted[1]));
         }
-      } else if (e.id == "enchanted:request_reset" && this.uuid == e.message) {
+      } else if (e.id == "enchanted:request_reset" && this.config.uuid == e.message) {
         this.request_idx = 0;
       }
     });
   }
-  configure_request(configs) {
-    this.configs = configs;
-    return this;
-  }
   initialize_request() {
     this.request_idx++;
-    system.sendScriptEvent("enchanted:request", this.uuid);
+    system.sendScriptEvent("enchanted:request", this.config.uuid + "\x01" + this.config.target);
   }
   *make_request(content) {
-    const splitlen = Math.min(this.configs.piece_len, 2048);
-    const header = `${this.uuid}\x01${this.request_idx}\x01`;
+    const header = `${this.config.uuid}\x01${this.config.target}\x01${this.request_idx}\x01`;
+    const splitlen = Math.min(this.config.piece_len, 2048) - header.length;
     const id = this.request_idx;
     const compressed = import_lz_string.compress(content);
     this.initialize_request();
@@ -531,24 +526,36 @@ class EnchantedClient {
     this.finalize_request(id);
   }
   finalize_request(id) {
-    system.sendScriptEvent("enchanted:finalize_request", `${this.uuid}\x01${id}`);
+    system.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
   }
   send_raw(data) {
-    system.runJob(this.make_request(data));
+    if (this.config.target)
+      return new Promise((ok, err) => {
+        this.ok_promises[this.request_idx] = ok;
+        system.runJob(this.make_request(data));
+      });
+    return new Promise((_, err) => err(new Error("Client does not have a target")));
   }
-  send_object(obj) {
-    const data = JSON.stringify(obj);
-    return this.send_raw(data);
+  async send_object(obj) {
+    return JSON.parse(await this.send_raw(JSON.stringify(obj)));
   }
-  handle_request(content, id) {
-    world.sendMessage("Received: " + content + " from id: " + id);
+  handle_response(content, id) {
   }
 }
 
 // src/main.ts
-var client = new EnchantedClient("seupai");
+var client = new EnchantedClient({
+  target: "enchanted",
+  piece_len: 2048,
+  uuid: "seupai"
+});
 world2.afterEvents.worldLoad.subscribe((e) => {
   client.send_object({
-    odeio: "esse relogio"
+    route: "/"
+  });
+});
+world2.afterEvents.playerBreakBlock.subscribe((e) => {
+  client.send_object({
+    route: "/seugay"
   });
 });
