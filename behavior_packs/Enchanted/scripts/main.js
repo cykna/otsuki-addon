@@ -15,16 +15,6 @@ var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
-var __legacyDecorateClassTS = function(decorators, target, key, desc) {
-  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-  if (typeof Reflect === "object" && typeof Reflect.decorate === "function")
-    r = Reflect.decorate(decorators, target, key, desc);
-  else
-    for (var i = decorators.length - 1;i >= 0; i--)
-      if (d = decorators[i])
-        r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-  return c > 3 && r && Object.defineProperty(target, key, r), r;
-};
 
 // ../../../../node_modules/lz-string/libs/lz-string.js
 var require_lz_string = __commonJS((exports, module) => {
@@ -488,9 +478,9 @@ var require_lz_string = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { world as world3 } from "@minecraft/server";
+import { world } from "@minecraft/server";
 
-// src/server/Response.ts
+// src/common/Response.ts
 class ErrorResponse {
   value;
   error = true;
@@ -506,112 +496,183 @@ class ErrorResponse {
 }
 
 // src/server/server.ts
-var import_lz_string2 = __toESM(require_lz_string(), 1);
 import { system as system3 } from "@minecraft/server";
-
-// src/server/decorators.ts
-import { system } from "@minecraft/server";
-function ImplEnchantedServer(constructor) {
-  system.afterEvents.scriptEventReceive.subscribe((e) => {
-    switch (e.id) {
-      case "enchanted:request": {
-        const split = e.message.split("\x01");
-        if (split[1] == constructor.running_server?.config.uuid)
-          if (constructor.requests.has(split[0])) {
-            constructor.requests.get(split[0]).push({ content: "", finalized: false });
-          } else {
-            constructor.requests.set(split[0], [{ content: "", finalized: false }]);
-          }
-        break;
-      }
-      case "enchanted:request_data": {
-        const splitted = e.message.split("\x01");
-        if (splitted[1] != constructor.running_server?.config.uuid)
-          return;
-        const first = splitted[0];
-        if (!constructor.requests.has(first))
-          throw new Error(`Not a recognized uuid: ${first}`);
-        if (constructor.running_server?.config.uuid != splitted[1])
-          break;
-        const idx = parseInt(splitted[2]);
-        constructor.requests.get(first)[idx].content += splitted[3];
-        break;
-      }
-      case "enchanted:finalize_request": {
-        const splitted = e.message.split("\x01");
-        if (constructor.running_server?.config.uuid != splitted[1])
-          return;
-        const first = splitted[0];
-        const idx = parseInt(splitted[2]);
-        const request = constructor.requests.get(first);
-        if (!request)
-          throw new Error(`Not a recognized uuid: ${first}`);
-        system.runJob(constructor.handle(request[idx].content, first, idx));
-        request[idx].finalized = true;
-        if (request.every((e2) => e2.finalized)) {
-          constructor.requests.delete(first);
-          constructor.request_reset_index(first);
-        }
-        break;
-      }
-    }
-  });
-}
 
 // src/client/client.ts
 var import_lz_string = __toESM(require_lz_string(), 1);
-import { system as system2, world } from "@minecraft/server";
+import { system } from "@minecraft/server";
 
+// src/client/message.ts
+class ClientInitializationMessage {
+  client_id;
+  server_id;
+  id;
+  constructor(client_id, server_id, id) {
+    this.client_id = client_id;
+    this.server_id = server_id;
+    this.id = id;
+  }
+  encode() {
+    return `${this.client_id}\x01${this.server_id}\x01${this.id}`;
+  }
+  decode(content) {
+    const splitted = content.split("\x01", 3);
+    this.client_id = splitted[0];
+    this.server_id = splitted[1];
+    this.id = parseInt(splitted[2]);
+  }
+}
+
+class ClientPacketMessage {
+  server_id;
+  client_id;
+  content;
+  request_index;
+  header;
+  constructor(server_id, client_id, content, request_index) {
+    this.server_id = server_id;
+    this.client_id = client_id;
+    this.content = content;
+    this.request_index = request_index;
+    this.header = `${this.client_id}\x01${this.server_id}\x01${this.request_index}\x01`;
+  }
+  encode() {
+    return `${this.header}${this.content}`;
+  }
+  decode(content) {
+    const splitted = content.split("\x01", 4);
+    this.client_id = splitted[0];
+    this.server_id = splitted[1];
+    this.request_index = parseInt(splitted[2]);
+    this.content = splitted[3];
+  }
+}
+
+class ClientFinalizationMessage {
+  client_id;
+  server_id;
+  request_index;
+  constructor(client_id, server_id, request_index) {
+    this.client_id = client_id;
+    this.server_id = server_id;
+    this.request_index = request_index;
+  }
+  encode() {
+    return `${this.client_id}\x01${this.server_id}\x01${this.request_index}`;
+  }
+  decode(content) {
+    const splitted = content.split("\x01", 3);
+    this.client_id = splitted[0];
+    this.server_id = splitted[1];
+    this.request_index = parseInt(splitted[2]);
+  }
+}
+
+// src/server/message.ts
+class ServerFinalizeMessage {
+  target;
+  id;
+  constructor(target, id) {
+    this.target = target;
+    this.id = id;
+  }
+  encode() {
+    return `${this.target}\x01${this.id}`;
+  }
+  decode(content) {
+    const splitted = content.split("\x01", 2);
+    this.target = splitted[0];
+    this.id = parseInt(splitted[1]);
+  }
+}
+
+class ServerPacketMessage {
+  target;
+  id;
+  content;
+  header;
+  constructor(target, id, content) {
+    this.target = target;
+    this.id = id;
+    this.content = content;
+    this.header = this.target + "\x01" + this.id + "\x01";
+  }
+  encode() {
+    return `${this.header}${this.content}`;
+  }
+  decode(content) {
+    const splitted = content.split("\x01", 3);
+    this.target = splitted[0];
+    this.id = parseInt(splitted[1]);
+    this.content = splitted[2];
+  }
+}
+
+// src/client/client.ts
 class EnchantedClient {
   config;
   request_idx = 0;
-  responses = [];
-  ok_promises = [];
+  responses = new Map;
   constructor(config) {
     this.config = config;
-    system2.afterEvents.scriptEventReceive.subscribe((e) => {
-      if (e.id == "enchanted:response") {
-        if (e.message == this.config.uuid)
-          this.responses.push("");
-      } else if (e.id == "enchanted:response_data") {
-        const splitted = e.message.split("\x01");
-        if (splitted[0] == this.config.uuid)
-          this.responses[splitted[1]] += splitted[2];
-      } else if (e.id == "enchanted:response_end") {
-        const splitted = e.message.split("\x01");
-        if (splitted[0] == this.config.uuid) {
-          const decompressed = import_lz_string.decompress(this.responses[splitted[1]]);
-          this.ok_promises[splitted[1]](decompressed);
-          this.handle_response(decompressed, parseInt(splitted[1]));
+    system.afterEvents.scriptEventReceive.subscribe((e) => {
+      switch (e.id) {
+        case "enchanted:response_data" /* PacketData */: {
+          const server_message = new ServerPacketMessage("", 0, "");
+          server_message.decode(e.message);
+          this.receive_packet(server_message);
+          break;
         }
-      } else if (e.id == "enchanted:request_reset" && this.config.uuid == e.message) {
-        this.request_idx = 0;
+        case "enchanted:response_end" /* Finalization */: {
+          const message = new ServerFinalizeMessage("", 0);
+          message.decode(e.message);
+          this.receive_finalization(message);
+          break;
+        }
       }
     });
   }
+  receive_packet(message) {
+    if (message.target != this.config.uuid)
+      return false;
+    this.responses.get(message.id).body += message.content;
+    return true;
+  }
+  receive_finalization(message) {
+    if (message.target != this.config.uuid)
+      return false;
+    const res = this.responses.get(message.id);
+    const decompressed = import_lz_string.decompress(res.body);
+    res.ok(decompressed);
+    this.responses.delete(message.id);
+    this.handle_response(decompressed, message.id);
+    return true;
+  }
   initialize_request() {
-    this.request_idx++;
-    system2.sendScriptEvent("enchanted:request", this.config.uuid + "\x01" + this.config.target);
+    const message = new ClientInitializationMessage(this.config.uuid, this.config.target, this.request_idx);
+    system.sendScriptEvent("enchanted:request" /* Initialization */, message.encode());
   }
   *make_request(content) {
     const splitlen = Math.min(this.config.piece_len, 2048);
-    const header = `${this.config.uuid}\x01${this.config.target}\x01${this.request_idx}\x01`;
-    const id = this.request_idx;
     const compressed = import_lz_string.compress(content);
     this.initialize_request();
-    for (let i = 0, j = compressed.length;i < j; i += splitlen)
-      yield system2.sendScriptEvent("enchanted:request_data", header + compressed.substring(i, i + Math.min(splitlen, j - i)));
-    this.finalize_request(id);
+    const message = new ClientPacketMessage(this.config.target, this.config.uuid, "", this.request_idx);
+    for (let i = 0, j = compressed.length;i < j; ) {
+      message.content = compressed.substring(i, i += splitlen);
+      yield system.sendScriptEvent("enchanted:request_data" /* PacketData */, message.encode());
+    }
+    this.finalize_request();
+    this.request_idx = (this.request_idx + 1) % 1024;
   }
-  finalize_request(id) {
-    system2.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
-    this.request_idx--;
+  finalize_request() {
+    const message = new ClientFinalizationMessage(this.config.uuid, this.config.target, this.request_idx).encode();
+    system.sendScriptEvent("enchanted:finalize_request" /* Finalization */, message);
   }
   send_raw(data) {
     if (this.config.target)
       return new Promise((ok, err) => {
-        this.ok_promises[this.request_idx] = ok;
-        system2.runJob(this.make_request(data));
+        this.responses.set(this.request_idx, { ok, body: "" });
+        system.runJob(this.make_request(data));
       });
     return new Promise((_, err) => err(new Error("Client does not have a target")));
   }
@@ -619,35 +680,90 @@ class EnchantedClient {
     return JSON.parse(await this.send_raw(JSON.stringify(obj)));
   }
   handle_response(content, id) {
-    world.sendMessage("Received: " + content + " from id: " + id);
   }
 }
 
+// src/server/internals.ts
+import { system as system2 } from "@minecraft/server";
+function* send_packet(buffer, target, id) {
+  const message = new ServerPacketMessage(target, id, "");
+  for (let i = 0, j = buffer.length;i < j; i += 2048) {
+    message.content = buffer.substring(i, i + 2048);
+    yield system2.sendScriptEvent("enchanted:response_data" /* PacketData */, message.encode());
+  }
+}
+function* send_response(response, target, id) {
+  if (EnchantedServer.running_server == null)
+    throw new Error("No Server is running to send a response. Error on server implementation");
+  yield* send_packet(response, target, id);
+  yield system2.sendScriptEvent("enchanted:response_end" /* Finalization */, new ServerFinalizeMessage(target, id).encode());
+}
+
 // src/server/server.ts
+var import_lz_string2 = __toESM(require_lz_string(), 1);
+system3.afterEvents.scriptEventReceive.subscribe((e) => {
+  if (!EnchantedServer.running_server)
+    return;
+  switch (e.id) {
+    case "enchanted:request" /* Initialization */: {
+      const message = new ClientInitializationMessage("", "", 0);
+      message.decode(e.message);
+      EnchantedServer.running_server.receive_initialization(message);
+      break;
+    }
+    case "enchanted:request_data" /* PacketData */: {
+      const message = new ClientPacketMessage("", "", "", 0);
+      message.decode(e.message);
+      EnchantedServer.running_server.receive_client_packet(message);
+      break;
+    }
+    case "enchanted:finalize_request" /* Finalization */: {
+      const message = new ClientFinalizationMessage("", "", 0);
+      message.decode(e.message);
+      EnchantedServer.running_server.receive_client_finalization(message);
+      break;
+    }
+  }
+});
+
 class EnchantedServer extends EnchantedClient {
   static running_server = null;
-  static request_reset_index(uuid) {
-    system3.sendScriptEvent("enchanted:request_reset", uuid);
-  }
-  static *send_response(req, target, id) {
-    const compressed = import_lz_string2.compress(req);
-    const header = `${target}\x01${id}\x01`;
-    for (let i = 0, j = compressed.length;i < j; i += 2048)
-      yield system3.sendScriptEvent("enchanted:response_data", header + compressed.substring(i, i + Math.min(2048, j - i)));
-  }
-  static *handle(request, target, id) {
-    if (this.running_server == null)
-      throw new Error("No Server is running to send a response. Error on server implementation");
-    const decompressed = import_lz_string2.decompress(request);
-    yield system3.sendScriptEvent("enchanted:response", target);
-    const response = this.running_server.handle_request(decompressed, target, id);
-    yield* this.send_response(response, target, id);
-    yield system3.sendScriptEvent("enchanted:response_end", `${target}\x01${id}`);
-  }
   static requests = new Map;
   constructor(config) {
     super(config);
-    EnchantedServer.running_server = this;
+    EnchantedServer.running_server ??= this;
+  }
+  receive_initialization(message) {
+    if (this.config.uuid != message.server_id)
+      return false;
+    const request = EnchantedServer.requests.get(message.client_id);
+    if (request)
+      request.set(message.id, { content: "" });
+    else
+      EnchantedServer.requests.set(message.client_id, new Map([[message.id, { content: "" }]]));
+    return true;
+  }
+  receive_client_packet(message) {
+    if (message.server_id != this.config.uuid)
+      return false;
+    const request = EnchantedServer.requests.get(message.client_id);
+    if (!request)
+      throw new Error(`Not recognized client: ${message.client_id}`);
+    request.get(message.request_index).content += message.content;
+    return true;
+  }
+  receive_client_finalization(message) {
+    if (this.config.uuid != message.server_id)
+      return false;
+    const request = EnchantedServer.requests.get(message.client_id);
+    if (!request)
+      throw new Error(`Not recognized client: ${message.client_id}`);
+    const content = import_lz_string2.decompress(request.get(message.request_index).content);
+    const response = this.handle_request(content, message.client_id, message.request_index);
+    const stream = send_response(import_lz_string2.compress(response), message.client_id, message.request_index);
+    system3.runJob(stream);
+    request.delete(message.request_index);
+    return true;
   }
   handle_request(req, client, req_id) {
     const data = this.handle(JSON.parse(req), client, req_id);
@@ -657,9 +773,6 @@ class EnchantedServer extends EnchantedClient {
     return "Todo! Enchanted Server default handle function is meant to be overwritten";
   }
 }
-EnchantedServer = __legacyDecorateClassTS([
-  ImplEnchantedServer
-], EnchantedServer);
 
 // src/server/routed_server.ts
 class RouteServer extends EnchantedServer {
@@ -726,6 +839,6 @@ new RouteServer({
   uuid: "enchanted",
   piece_len: 2048
 }).route("/", () => {
-  world3.sendMessage("Vai pro cacete");
+  world.sendMessage("Vai pro cacete");
   return "que raiva";
 }).route("/seugay", (content) => 24).route("/peloamor", () => 69);

@@ -1,62 +1,89 @@
-import { system, world } from "@minecraft/server";
+import { system, } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
+import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage } from "./message.ts";
+import { ServerPacketMessage, ServerFinalizeMessage } from "../server/message.ts";
+import { RequestType, ResponseType } from "../../../Enchanted/src/common/types.ts";
 
 export interface RequestConfig {
   piece_len: number;
   target?: string;
   uuid: string;
 }
-
+export interface ResponseData {
+  body: string;
+  ok(value: string): any;
+}
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */
 export class EnchantedClient {
 
   private request_idx = 0;
-  private responses: string[] = [];
-  private ok_promises: ((value: any) => any)[] = [];
+  //Awaiting promises. In case the responses
+  private responses: Map<number, ResponseData> = new Map;
 
-  constructor(private config: RequestConfig) {
+  constructor(protected readonly config: RequestConfig) {
     system.afterEvents.scriptEventReceive.subscribe(e => {
-      if (e.id == "enchanted:response") {
-        if (e.message == this.config.uuid) this.responses.push("");
-      } else if (e.id == "enchanted:response_data") {
-        const splitted = e.message.split('\x01');
-        if (splitted[0] == this.config.uuid) this.responses[splitted[1]] += splitted[2];
-      } else if (e.id == "enchanted:response_end") {
-        const splitted = e.message.split('\x01');
-        if (splitted[0] == this.config.uuid) {
-          const decompressed = decompress(this.responses[splitted[1]]);
-          this.ok_promises[splitted[1]](decompressed);
-          this.handle_response(decompressed, parseInt(splitted[1]));
+      switch (e.id) {
+        case ResponseType.PacketData: {
+          const server_message = new ServerPacketMessage('', 0, '');
+          server_message.decode(e.message);
+          this.receive_packet(server_message);
+          break;
         }
-      } else if (e.id == "enchanted:request_reset" && this.config.uuid == e.message) {
-        this.request_idx = 0;
+        case ResponseType.Finalization: {
+          const message = new ServerFinalizeMessage('', 0);
+          message.decode(e.message);
+          this.receive_finalization(message);
+          break;
+        }
       }
     });
   }
 
+
+  protected receive_packet(message: ServerPacketMessage): boolean {
+    if (message.target != this.config.uuid) return false;
+    this.responses.get(message.id)!.body += message.content;
+    return true;
+  }
+
+  protected receive_finalization(message: ServerFinalizeMessage) {
+    if (message.target != this.config.uuid) return false;
+    const res = this.responses.get(message.id)!;
+    const decompressed = decompress(res.body);
+    res.ok(decompressed);
+    this.responses.delete(message.id);
+    this.handle_response(decompressed, message.id);
+    return true;
+  }
+
   private initialize_request() {
-    this.request_idx++;
-    system.sendScriptEvent("enchanted:request", this.config.uuid + "\x01" + this.config.target!);
+    const message = new ClientInitializationMessage(this.config.uuid, this.config.target!, this.request_idx);
+    system.sendScriptEvent(RequestType.Initialization, message.encode());
   }
   /**
   * Sends the given content to Enchanted Server splitting its contents. Its a generator due to runJob
   * Spltilen must be <=2048, or else it will be truncated. The limit of system scriptEventReceive message is 2048
   */
-  private * make_request(content: string) {
+  private *make_request(content: string) {
+
     const splitlen = Math.min(this.config.piece_len, 2048);
-    const header = `${this.config.uuid}\x01${this.config.target}\x01${this.request_idx}\x01`;
-    const id = this.request_idx;
     const compressed = compress(content);
     this.initialize_request();
-    for (let i = 0, j = compressed.length; i < j; i += splitlen) yield system.sendScriptEvent("enchanted:request_data", header + compressed.substring(i, i + Math.min(splitlen, j - i)));
-    this.finalize_request(id);
+    const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
+    for (let i = 0, j = compressed.length; i < j;) {
+      message.content = compressed.substring(i, i += splitlen);
+      yield system.sendScriptEvent(RequestType.PacketData, message.encode());
+    }
+    this.finalize_request();
+    this.request_idx = (this.request_idx + 1) % 1024;
+
   }
 
-  private finalize_request(id: number) {
-    system.sendScriptEvent("enchanted:finalize_request", `${this.config.uuid}\x01${this.config.target}\x01${id}`);
-    this.request_idx--;
+  private finalize_request() {
+    const message = new ClientFinalizationMessage(this.config.uuid, this.config.target!, this.request_idx).encode();
+    system.sendScriptEvent(RequestType.Finalization, message);
   }
 
   /**
@@ -64,7 +91,7 @@ export class EnchantedClient {
   */
   send_raw(data: string): Promise<string> {
     if (this.config.target) return new Promise((ok, err) => {
-      this.ok_promises[this.request_idx] = ok;
+      this.responses.set(this.request_idx, { ok, body: '' });
       system.runJob(this.make_request(data));
     });
     return new Promise((_, err) => err(new Error("Client does not have a target")));
@@ -78,7 +105,6 @@ export class EnchantedClient {
   }
 
   handle_response(content: string, id: number) {
-    world.sendMessage("Received: " + content + " from id: " + id);
   }
 }
 

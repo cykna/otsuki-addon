@@ -1,5 +1,5 @@
 import { RequestConfig } from "../client/client";
-import { EnchantedResponse, ErrorResponse } from "./Response";
+import { EnchantedResponse, ErrorResponse } from "../common/Response";
 import { EnchantedServer } from "./server";
 
 export type RouteFn = <T>(value: T, param: string[], client: string, req_id: number, queries: Map<string, string>) => any;
