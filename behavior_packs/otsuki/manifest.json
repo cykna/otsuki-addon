@@ -1,49 +1,49 @@
 {
-    "format_version": 2,
-    "header": {
-        "name": "Otsuki",
-        "description": "made by quriosen",
-        "uuid": "01965f8c-9fd0-7000-b27e-e68fbad5b998",
-        "version": [
-            1,
-            0,
-            0
-        ],
-        "min_engine_version": [
-            1,
-            21,
-            70
-        ]
+  "format_version": 2,
+  "header": {
+    "name": "Otsuki",
+    "description": "made by cycro",
+    "uuid": "01965f8c-9fd0-7000-b27e-e68fbad5b998",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      70
+    ]
+  },
+  "modules": [
+    {
+      "uuid": "01965f8c-9fd0-7002-b3cf-af09796fcb5c",
+      "description": "Made with Enchanted, by Quriosen",
+      "type": "data",
+      "version": [
+        1,
+        0,
+        0
+      ]
     },
-    "modules": [
-        {
-            "uuid": "01965f8c-9fd0-7002-b3cf-af09796fcb5c",
-            "description": "Made with Enchanted, by Quriosen",
-            "type": "data",
-            "version": [
-                1,
-                0,
-                0
-            ]
-        },
-        {
-            "uuid": "01965f8c-9fd0-7003-b439-c51abd0b2b3a",
-            "description": "Made with Enchanted, by Quriosen",
-            "type": "script",
-            "language": "javascript",
-            "entry": "scripts/main.js",
-            "version": [
-                1,
-                0,
-                0
-            ]
-        }
-    ],
-    "dependencies": [
-        {
-            "module_name": "@minecraft/server",
-            "version": "2.0.0-beta"
-        }
-    ],
-    "capabilities": []
+    {
+      "uuid": "01965f8c-9fd0-7003-b439-c51abd0b2b3a",
+      "description": "Made with Enchanted, by Cycro",
+      "type": "script",
+      "language": "javascript",
+      "entry": "scripts/main.js",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0-beta"
+    }
+  ],
+  "capabilities": []
 }

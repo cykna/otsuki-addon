@@ -674,6 +674,13 @@ var RequestConstants;
 })(RequestConstants ||= {});
 
 // src/client/client.ts
+function default_request_config() {
+  return {
+    batch: false,
+    blocks: false
+  };
+}
+
 class EnchantedClient {
   config;
   batch_message;
@@ -742,7 +749,7 @@ class EnchantedClient {
     const message = new ClientInitializationMessage(this.config.uuid, this.config.target, this.request_idx);
     system.sendScriptEvent("enchanted:request" /* Initialization */, message.encode());
   }
-  *make_request(content) {
+  *make_request_nonblocking(content) {
     const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = import_lz_string.compress(content);
     const id = this.request_idx;
@@ -777,33 +784,38 @@ class EnchantedClient {
     const compressed = import_lz_string.compress(encoded);
     system.sendScriptEvent("enchanted:batch_request" /* BatchRequest */, compressed);
   }
-  send_raw(data) {
+  make_batch_request(data) {
+    if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: "" });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      });
+    } else {
+      this.batch_requests_blocking();
+      this.batch_message.clear();
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: "" });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      });
+    }
+  }
+  send_raw(data, config) {
     if (!this.config.target)
       return new Promise((_, err) => err(new Error("Client does not have a target")));
-    if (this.config.batch_request) {
-      if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: "" });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        });
-      } else {
-        this.batch_requests_blocking();
-        this.batch_message.clear();
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: "" });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        });
-      }
-    }
+    if (config.batch)
+      return this.make_batch_request(data);
     return new Promise((ok, _) => {
       this.responses.set(this.request_idx, { ok, body: "" });
-      this.make_request_blocking(data);
+      if (config.blocks)
+        this.make_request_blocking(data);
+      else
+        this.make_request_nonblocking(data);
     });
   }
-  async send_object(obj) {
-    return JSON.parse(await this.send_raw(JSON.stringify(obj)));
+  async send_object(obj, config = default_request_config()) {
+    return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
   }
   handle_response(content, id) {
   }
@@ -813,14 +825,14 @@ class EnchantedClient {
 var client = new EnchantedClient({
   target: "enchanted",
   piece_len: 2048,
-  uuid: "seupai",
-  batch_request: true
+  uuid: "seupai"
 });
 world2.afterEvents.playerBreakBlock.subscribe(async (e) => {
   let i = 0;
   const now = Date.now();
   while (Date.now() - now < 1000) {
-    client.send_object({ route: "/" }).then((e2) => world2.sendMessage(JSON.stringify(e2)));
+    let j = i;
+    client.send_object({ route: "/" }).then((e2) => world2.sendMessage(j.toString()));
     i++;
   }
   console.log("Sent a total of", i, "requests");

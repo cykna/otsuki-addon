@@ -3,9 +3,7 @@ import { EnchantedClient } from "./client/client.ts";
 
 const client = new EnchantedClient({
   target: "enchanted",
-  piece_len: 2048,
-  uuid: "seupai",
-  batch_request: true
+  uuid: "seupai"
 });
 
 
@@ -13,7 +11,10 @@ world.afterEvents.playerBreakBlock.subscribe(async e => {
   let i = 0;
   const now = Date.now();
   while (Date.now() - now < 1000) {
-    client.send_object({ "route": "/" }).then(e => world.sendMessage(JSON.stringify(e)));
+    let j = i;
+    client
+      .send_object({ "route": "/" })
+      .then(e => world.sendMessage(j.toString()));
     i++;
   }
   console.log("Sent a total of", i, "requests");
