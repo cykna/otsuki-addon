@@ -1,4 +1,4 @@
-import { system, } from "@minecraft/server";
+import { system, world, } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
 import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "./message.ts";
 import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../server/message.ts";
@@ -55,6 +55,10 @@ export class EnchantedClient {
   protected receive_batch(message: ServerBatchedMessage) {
     if (message.client_id != this.config.uuid) return false;
     for (const response of message.responses) {
+      const res = this.responses.get(response.id);
+      if (!res) return;
+      res.ok(response.body);
+      this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
   }

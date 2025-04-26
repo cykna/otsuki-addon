@@ -13,7 +13,7 @@ world.afterEvents.playerBreakBlock.subscribe(async e => {
   let i = 0;
   const now = Date.now();
   while (Date.now() - now < 1000) {
-    client.send_object({ "route": "/" }).then(e => world.sendMessage("Oi" + i));
+    client.send_object({ "route": "/" }).then(e => world.sendMessage(JSON.stringify(e)));
     i++;
   }
   console.log("Sent a total of", i, "requests");

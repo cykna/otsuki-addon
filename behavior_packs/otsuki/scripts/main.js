@@ -478,7 +478,7 @@ var require_lz_string = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { world } from "@minecraft/server";
+import { world as world2 } from "@minecraft/server";
 
 // src/client/client.ts
 var import_lz_string = __toESM(require_lz_string(), 1);
@@ -709,6 +709,11 @@ class EnchantedClient {
     if (message.client_id != this.config.uuid)
       return false;
     for (const response of message.responses) {
+      const res = this.responses.get(response.id);
+      if (!res)
+        return;
+      res.ok(response.body);
+      this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
   }
@@ -811,11 +816,11 @@ var client = new EnchantedClient({
   uuid: "seupai",
   batch_request: true
 });
-world.afterEvents.playerBreakBlock.subscribe(async (e) => {
+world2.afterEvents.playerBreakBlock.subscribe(async (e) => {
   let i = 0;
   const now = Date.now();
   while (Date.now() - now < 1000) {
-    client.send_object({ route: "/" }).then((e2) => world.sendMessage("Oi" + i));
+    client.send_object({ route: "/" }).then((e2) => world2.sendMessage(JSON.stringify(e2)));
     i++;
   }
   console.log("Sent a total of", i, "requests");
