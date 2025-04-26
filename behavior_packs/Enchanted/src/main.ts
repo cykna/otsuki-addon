@@ -7,6 +7,5 @@ new RouteServer({
   uuid: "enchanted",
   piece_len: 2048,
 }).route("/", () => {
-  world.sendMessage("Vai pro cacete");
-  return "que raiva";
+  return "hello world";
 }).route("/seugay", (content) => 24).route("/peloamor", () => 69);

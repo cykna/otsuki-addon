@@ -1,20 +1,20 @@
-import { SystemMessage } from "./message";
+import { SystemMessage } from "../common/message";
 
 /**
  * A client message to the server of requesting initialization
  */
 export class ClientInitializationMessage implements SystemMessage {
-  constructor(public client_id: string, public server_id: string, public id: number) { }
+  constructor(public client_id: string, public server_id: string, public request_index: number) { }
 
   encode(): string {
-    return `${this.client_id}\x01${this.server_id}\x01${this.id}`;
+    return `${this.client_id}\x01${this.server_id}\x01${this.request_index}`;
   }
 
   decode(content: string): void {
     const splitted = content.split('\x01', 3);
     this.client_id = splitted[0];
     this.server_id = splitted[1];
-    this.id = parseInt(splitted[2]);
+    this.request_index = parseInt(splitted[2]);
   }
 }
 /**
@@ -54,5 +54,44 @@ export class ClientFinalizationMessage implements SystemMessage {
     this.client_id = splitted[0];
     this.server_id = splitted[1];
     this.request_index = parseInt(splitted[2]);
+  }
+}
+
+export interface RequestData {
+  body: string;
+  id: number;
+}
+
+export class ClientBatchMessage implements SystemMessage {
+  private request_buffer = "";
+  public requests: RequestData[] = [];
+  constructor(public client_id: string, public server_id: string) {
+
+  }
+  len() {
+    return this.request_buffer.length;
+  }
+  add_request(req: string, id: number) {
+    if (this.request_buffer == "") this.request_buffer = req + "\x03" + id;
+    else this.request_buffer += "\x02" + req + "\x03" + id;
+  }
+  encode() {
+    return `${this.request_buffer}\x01${this.client_id}\x01${this.server_id}`
+  }
+  decode(content: string): void {
+    const [requests, client, server] = content.split("\x01", 3);
+    this.client_id = client;
+    this.server_id = server;
+    this.requests = requests.split("\x02").map(req => {
+      const [body, id] = req.split("\x03");
+      return {
+        body,
+        id: parseInt(id)
+      }
+    })
+  }
+  clear() {
+    this.request_buffer = "";
+    this.requests.length = 0;
   }
 }

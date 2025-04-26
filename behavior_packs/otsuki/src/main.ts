@@ -1,23 +1,21 @@
 import { system, world } from "@minecraft/server";
-import { EnchantedClient } from "./client/client";
+import { EnchantedClient } from "./client/client.ts";
 
 const client = new EnchantedClient({
   target: "enchanted",
   piece_len: 2048,
-  uuid: "seupai"
+  uuid: "seupai",
+  batch_request: true
 });
 
-world.afterEvents.worldLoad.subscribe(e => {
-  client.send_object({
-    route: "/",
-  });
-})
 
-world.afterEvents.playerBreakBlock.subscribe(e => {
-  client.send_object({
-    route: "/peloamor",
-    content: {
-      seu: "corno"
-    }
-  }).then(e => console.log(JSON.stringify(e)));
-})
+world.afterEvents.playerBreakBlock.subscribe(async e => {
+  let i = 0;
+  const now = Date.now();
+  while (Date.now() - now < 1000) {
+    client.send_object({ "route": "/" }).then(e => world.sendMessage("Oi" + i));
+    i++;
+  }
+  console.log("Sent a total of", i, "requests");
+});
+

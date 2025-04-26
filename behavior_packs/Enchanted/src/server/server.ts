@@ -1,9 +1,12 @@
 import { system, } from "@minecraft/server";
 import { EnchantedClient, RequestConfig } from "../client/client";
 import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage } from "../client/message.ts"
-import { RequestType } from "../common/types.ts";
-import { send_response } from "./internals.ts";
+import { RequestType, ResponseType } from "../common/types.ts";
+import { send_batch, send_response, send_response_blocking } from "./internals.ts";
 import { compress, decompress } from "lz-string";
+import { ClientBatchMessage } from "../../../otsuki/src/client/message.ts";
+import { ServerBatchedMessage } from "./message.ts";
+import { RequestConstants } from "../common/constants.ts";
 
 export interface EnchantedRequest {
   content: string;
@@ -11,8 +14,9 @@ export interface EnchantedRequest {
 
 system.afterEvents.scriptEventReceive.subscribe(e => {
   if (!EnchantedServer.running_server) return;
+
   switch (e.id) {
-    case RequestType.Initialization: { //"/scriptevent enchanted:request uuid"
+    case RequestType.Initialization: {
       const message = new ClientInitializationMessage('', '', 0);
       message.decode(e.message);
       EnchantedServer.running_server.receive_initialization(message);
@@ -30,6 +34,12 @@ system.afterEvents.scriptEventReceive.subscribe(e => {
       EnchantedServer.running_server.receive_client_finalization(message);
       break;
     }
+    case RequestType.BatchRequest: {
+      const decompressed_message = decompress(e.message);
+      const message = new ClientBatchMessage('', '');
+      message.decode(decompressed_message);
+      EnchantedServer.running_server.receive_client_batch(message);
+    }
   }
 });
 
@@ -42,20 +52,36 @@ export class EnchantedServer extends EnchantedClient {
     super(config);
     EnchantedServer.running_server ??= this;
   }
+
   public receive_initialization(message: ClientInitializationMessage) {
     if (this.config.uuid != message.server_id) return false;
     const request = EnchantedServer.requests.get(message.client_id);
-    if (request) request.set(message.id, { content: '' })
-    else EnchantedServer.requests.set(message.client_id, new Map([[message.id, { content: '' }]]));
+    if (request) request.set(message.request_index, { content: '' })
+    else EnchantedServer.requests.set(message.client_id, new Map([[message.request_index, { content: '' }]]));
     return true;
   }
+
   public receive_client_packet(message: ClientPacketMessage) {
     if (message.server_id != this.config.uuid) return false;
     const request = EnchantedServer.requests.get(message.client_id);
     if (!request) throw new Error(`Not recognized client: ${message.client_id}`);
     request.get(message.request_index)!.content += message.content;
-    return true;
 
+    return true;
+  }
+
+
+  public receive_client_batch(message: ClientBatchMessage) {
+    if (message.server_id != this.config.uuid) return false;
+    const batch_message = new ServerBatchedMessage(message.client_id);
+    for (const request of message.requests) {
+      const response = this.handle_request(request.body, message.client_id, request.id);
+      if (response.length + batch_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        send_batch(batch_message);
+        batch_message.reset();
+      }
+      batch_message.add_response(response, request.id);
+    }
   }
 
   public receive_client_finalization(message: ClientFinalizationMessage) {
@@ -64,11 +90,11 @@ export class EnchantedServer extends EnchantedClient {
     if (!request) throw new Error(`Not recognized client: ${message.client_id}`);
 
     const content = decompress(request.get(message.request_index)!.content);
+
     const response = this.handle_request(content, message.client_id, message.request_index);
 
-    const stream = send_response(compress(response), message.client_id, message.request_index);
+    send_response_blocking(compress(response), message.client_id, message.request_index);
 
-    system.runJob(stream);
     request.delete(message.request_index);
     return true;
   }

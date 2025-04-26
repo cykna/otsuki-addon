@@ -488,20 +488,20 @@ import { system } from "@minecraft/server";
 class ClientInitializationMessage {
   client_id;
   server_id;
-  id;
-  constructor(client_id, server_id, id) {
+  request_index;
+  constructor(client_id, server_id, request_index) {
     this.client_id = client_id;
     this.server_id = server_id;
-    this.id = id;
+    this.request_index = request_index;
   }
   encode() {
-    return `${this.client_id}\x01${this.server_id}\x01${this.id}`;
+    return `${this.client_id}\x01${this.server_id}\x01${this.request_index}`;
   }
   decode(content) {
     const splitted = content.split("\x01", 3);
     this.client_id = splitted[0];
     this.server_id = splitted[1];
-    this.id = parseInt(splitted[2]);
+    this.request_index = parseInt(splitted[2]);
   }
 }
 
@@ -550,34 +550,73 @@ class ClientFinalizationMessage {
   }
 }
 
+class ClientBatchMessage {
+  client_id;
+  server_id;
+  request_buffer = "";
+  requests = [];
+  constructor(client_id, server_id) {
+    this.client_id = client_id;
+    this.server_id = server_id;
+  }
+  len() {
+    return this.request_buffer.length;
+  }
+  add_request(req, id) {
+    if (this.request_buffer == "")
+      this.request_buffer = req + "\x03" + id;
+    else
+      this.request_buffer += "\x02" + req + "\x03" + id;
+  }
+  encode() {
+    return `${this.request_buffer}\x01${this.client_id}\x01${this.server_id}`;
+  }
+  decode(content) {
+    const [requests, client, server] = content.split("\x01", 3);
+    this.client_id = client;
+    this.server_id = server;
+    this.requests = requests.split("\x02").map((req) => {
+      const [body, id] = req.split("\x03");
+      return {
+        body,
+        id: parseInt(id)
+      };
+    });
+  }
+  clear() {
+    this.request_buffer = "";
+    this.requests.length = 0;
+  }
+}
+
 // src/server/message.ts
 class ServerFinalizeMessage {
   target;
-  id;
-  constructor(target, id) {
+  response_index;
+  constructor(target, response_index) {
     this.target = target;
-    this.id = id;
+    this.response_index = response_index;
   }
   encode() {
-    return `${this.target}\x01${this.id}`;
+    return `${this.target}\x01${this.response_index}`;
   }
   decode(content) {
     const splitted = content.split("\x01", 2);
     this.target = splitted[0];
-    this.id = parseInt(splitted[1]);
+    this.response_index = parseInt(splitted[1]);
   }
 }
 
 class ServerPacketMessage {
   target;
-  id;
+  response_index;
   content;
   header;
-  constructor(target, id, content) {
+  constructor(target, response_index, content) {
     this.target = target;
-    this.id = id;
+    this.response_index = response_index;
     this.content = content;
-    this.header = this.target + "\x01" + this.id + "\x01";
+    this.header = this.target + "\x01" + this.response_index + "\x01";
   }
   encode() {
     return `${this.header}${this.content}`;
@@ -585,18 +624,64 @@ class ServerPacketMessage {
   decode(content) {
     const splitted = content.split("\x01", 3);
     this.target = splitted[0];
-    this.id = parseInt(splitted[1]);
+    this.response_index = parseInt(splitted[1]);
     this.content = splitted[2];
   }
 }
 
+class ServerBatchedMessage {
+  client_id;
+  response_buffer = "";
+  responses = [];
+  constructor(client_id) {
+    this.client_id = client_id;
+  }
+  len() {
+    return this.response_buffer.length;
+  }
+  add_response(res, id) {
+    if (this.response_buffer == "")
+      this.response_buffer = res + "\x03" + id;
+    else
+      this.response_buffer += "\x02" + res + "\x03" + id;
+  }
+  encode() {
+    return `${this.client_id}\x01${this.response_buffer}`;
+  }
+  decode(content) {
+    const [client_id, batch_content] = content.split("\x01", 2);
+    this.client_id = client_id;
+    this.responses = batch_content.split("\x02").map((res) => {
+      const [body, id] = res.split("\x03", 2);
+      return {
+        body,
+        id: parseInt(id)
+      };
+    });
+  }
+  reset() {
+    this.responses.length = 0;
+    this.response_buffer = "";
+  }
+}
+
+// src/common/constants.ts
+var RequestConstants;
+((RequestConstants) => {
+  RequestConstants.SIZE_LIMIT = 2048;
+  RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT = 2048 * 1.3;
+  RequestConstants.REQUEST_AMOUNT_LIMIT = 4096;
+})(RequestConstants ||= {});
+
 // src/client/client.ts
 class EnchantedClient {
   config;
+  batch_message;
   request_idx = 0;
   responses = new Map;
   constructor(config) {
     this.config = config;
+    this.batch_message = new ClientBatchMessage(config.uuid, config.target);
     system.afterEvents.scriptEventReceive.subscribe((e) => {
       switch (e.id) {
         case "enchanted:response_data" /* PacketData */: {
@@ -611,23 +696,41 @@ class EnchantedClient {
           this.receive_finalization(message);
           break;
         }
+        case "enchantend:batch_response" /* BatchResponse */: {
+          const message = new ServerBatchedMessage("");
+          const decompressed = import_lz_string.decompress(e.message);
+          message.decode(decompressed);
+          this.receive_batch(message);
+        }
       }
     });
+  }
+  receive_batch(message) {
+    if (message.client_id != this.config.uuid)
+      return false;
+    for (const response of message.responses) {
+      this.handle_response(response.body, response.id);
+    }
   }
   receive_packet(message) {
     if (message.target != this.config.uuid)
       return false;
-    this.responses.get(message.id).body += message.content;
+    this.responses.get(message.response_index).body += message.content;
     return true;
+  }
+  handle_indexed_response(index) {
+    const res = this.responses.get(index);
+    if (!res)
+      return;
+    const decompressed = import_lz_string.decompress(res.body);
+    res.ok(decompressed);
+    this.responses.delete(index);
+    this.handle_response(decompressed, index);
   }
   receive_finalization(message) {
     if (message.target != this.config.uuid)
       return false;
-    const res = this.responses.get(message.id);
-    const decompressed = import_lz_string.decompress(res.body);
-    res.ok(decompressed);
-    this.responses.delete(message.id);
-    this.handle_response(decompressed, message.id);
+    this.handle_indexed_response(message.response_index);
     return true;
   }
   initialize_request() {
@@ -635,28 +738,64 @@ class EnchantedClient {
     system.sendScriptEvent("enchanted:request" /* Initialization */, message.encode());
   }
   *make_request(content) {
-    const splitlen = Math.min(this.config.piece_len, 2048);
+    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = import_lz_string.compress(content);
+    const id = this.request_idx;
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target, this.config.uuid, "", this.request_idx);
+    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length;i < j; ) {
       message.content = compressed.substring(i, i += splitlen);
       yield system.sendScriptEvent("enchanted:request_data" /* PacketData */, message.encode());
     }
-    this.finalize_request();
-    this.request_idx = (this.request_idx + 1) % 1024;
+    this.finalize_request(id);
   }
-  finalize_request() {
-    const message = new ClientFinalizationMessage(this.config.uuid, this.config.target, this.request_idx).encode();
+  make_request_blocking(content) {
+    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
+    const compressed = import_lz_string.compress(content);
+    const id = this.request_idx;
+    this.initialize_request();
+    const message = new ClientPacketMessage(this.config.target, this.config.uuid, "", this.request_idx);
+    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+    for (let i = 0, j = compressed.length;i < j; ) {
+      message.content = compressed.substring(i, i += splitlen);
+      system.sendScriptEvent("enchanted:request_data" /* PacketData */, message.encode());
+    }
+    this.finalize_request(id);
+  }
+  finalize_request(id) {
+    const message = new ClientFinalizationMessage(this.config.uuid, this.config.target, id).encode();
     system.sendScriptEvent("enchanted:finalize_request" /* Finalization */, message);
   }
+  batch_requests_blocking() {
+    const encoded = this.batch_message.encode();
+    const compressed = import_lz_string.compress(encoded);
+    system.sendScriptEvent("enchanted:batch_request" /* BatchRequest */, compressed);
+  }
   send_raw(data) {
-    if (this.config.target)
-      return new Promise((ok, err) => {
-        this.responses.set(this.request_idx, { ok, body: "" });
-        system.runJob(this.make_request(data));
-      });
-    return new Promise((_, err) => err(new Error("Client does not have a target")));
+    if (!this.config.target)
+      return new Promise((_, err) => err(new Error("Client does not have a target")));
+    if (this.config.batch_request) {
+      if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        this.batch_message.add_request(data, this.request_idx);
+        return new Promise((ok, _) => {
+          this.responses.set(this.request_idx, { ok, body: "" });
+          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+        });
+      } else {
+        this.batch_requests_blocking();
+        this.batch_message.clear();
+        this.batch_message.add_request(data, this.request_idx);
+        return new Promise((ok, _) => {
+          this.responses.set(this.request_idx, { ok, body: "" });
+          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+        });
+      }
+    }
+    return new Promise((ok, _) => {
+      this.responses.set(this.request_idx, { ok, body: "" });
+      this.make_request_blocking(data);
+    });
   }
   async send_object(obj) {
     return JSON.parse(await this.send_raw(JSON.stringify(obj)));
@@ -669,18 +808,15 @@ class EnchantedClient {
 var client = new EnchantedClient({
   target: "enchanted",
   piece_len: 2048,
-  uuid: "seupai"
+  uuid: "seupai",
+  batch_request: true
 });
-world.afterEvents.worldLoad.subscribe((e) => {
-  client.send_object({
-    route: "/"
-  });
-});
-world.afterEvents.playerBreakBlock.subscribe((e) => {
-  client.send_object({
-    route: "/peloamor",
-    content: {
-      seu: "corno"
-    }
-  }).then((e2) => console.log(JSON.stringify(e2)));
+world.afterEvents.playerBreakBlock.subscribe(async (e) => {
+  let i = 0;
+  const now = Date.now();
+  while (Date.now() - now < 1000) {
+    client.send_object({ route: "/" }).then((e2) => world.sendMessage("Oi" + i));
+    i++;
+  }
+  console.log("Sent a total of", i, "requests");
 });
