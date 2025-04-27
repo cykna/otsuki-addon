@@ -1,4 +1,4 @@
-import { system, } from "@minecraft/server";
+import { system } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
 import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "./message.ts";
 import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../server/message.ts";
@@ -6,17 +6,28 @@ import { RequestType, ResponseType } from "../common/types.ts";
 import { RequestConstants } from "../common/constants.ts";
 
 
-export interface RequestConfig {
-  piece_len: number;
-  batch_request?: boolean;
-  bacth_response?: boolean;
+export interface ClientConfig {
   target?: string;
   uuid: string;
 }
+
 export interface ResponseData {
   body: string;
   ok(value: string): any;
 }
+
+export interface RequestConfig {
+  batch: boolean,
+  blocks: boolean
+}
+
+export function default_request_config(): RequestConfig {
+  return {
+    batch: false,
+    blocks: false
+  }
+}
+
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */
@@ -26,7 +37,7 @@ export class EnchantedClient {
   //Awaiting promises. In case the responses
   protected responses: Map<number, ResponseData> = new Map;
 
-  constructor(protected readonly config: RequestConfig) {
+  constructor(protected readonly config: ClientConfig) {
     this.batch_message = new ClientBatchMessage(config.uuid, config.target!);
     system.afterEvents.scriptEventReceive.subscribe(e => {
       switch (e.id) {
@@ -55,6 +66,10 @@ export class EnchantedClient {
   protected receive_batch(message: ServerBatchedMessage) {
     if (message.client_id != this.config.uuid) return false;
     for (const response of message.responses) {
+      const res = this.responses.get(response.id);
+      if (!res) return;
+      res.ok(response.body);
+      this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
   }
@@ -85,17 +100,19 @@ export class EnchantedClient {
     return true;
   }
 
+  /**
+   * Sends a message to the server saying this client is going to emit a request.
+   */
   protected initialize_request() {
     const message = new ClientInitializationMessage(this.config.uuid, this.config.target!, this.request_idx);
     system.sendScriptEvent(RequestType.Initialization, message.encode());
   }
   /**
-  * Sends the given content to Enchanted Server splitting its contents. Its a generator due to runJob
-  * Spltilen must be <=2048, or else it will be truncated. The limit of system scriptEventReceive message is 2048
+  * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
+  * The formula to calculate the amount of scriptevents will be sent is 2 + ceil(N / 2048). N is the length in chars of the content compressed.. 2 is because of 1 from initializing and another 1 from finishing
   */
-  private *make_request(content: string) {
+  private *make_request_nonblocking(content: string) {
 
-    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = compress(content);
     const id = this.request_idx;
 
@@ -103,7 +120,7 @@ export class EnchantedClient {
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += splitlen);
+      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
       yield system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
@@ -111,11 +128,11 @@ export class EnchantedClient {
   }
 
   /**
-   * Does the same as make_request but blocks the client thread
+   * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
+   * The formula to calculate the amount of scriptevents will be sent is 2 + ceil(N / 2048). N is the length in chars of the content compressed.. 2 is because of 1 from initializing and another 1 from finishing
    */
   private make_request_blocking(content: string) {
 
-    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = compress(content);
     const id = this.request_idx;
 
@@ -123,56 +140,66 @@ export class EnchantedClient {
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += splitlen);
+      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
       system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
   }
 
+  /**
+   * Sends a message to the server telling the request that was being sent finalized, so it can process it.
+   * @param id The id of the request to be processed by the server
+   */
   private finalize_request(id: number) {
     const message = new ClientFinalizationMessage(this.config.uuid, this.config.target!, id).encode();
     system.sendScriptEvent(RequestType.Finalization, message);
   }
 
-  private batch_requests_blocking() {
+  /**
+   * This is expected to send a lot of requests on a single scriptEvent call, so theres no need to a nonblocking variant.
+   */
+  private batch_request() {
     const encoded = this.batch_message.encode();
     const compressed = compress(encoded);
     system.sendScriptEvent(RequestType.BatchRequest, compressed);
   }
 
-  /**
-  * Compress the given data and requests it to Enchanted Server target.  Parts len is the length of each piece of data. 2048 is the max
-  */
-  send_raw(data: string): Promise<string> {
-    if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));
-    if (this.config.batch_request) {
-      if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: '' });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        });
-      } else {
-        this.batch_requests_blocking();
-        this.batch_message.clear();
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: '' });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        })
-      }
+  private make_batch_request(data: string): Promise<string> {
+    if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: '' });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      });
+    } else {
+      this.batch_request();
+      this.batch_message.clear();
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: '' });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      })
     }
+  }
+
+  /**
+  * Compress the given data and requests it to Enchanted Server target.
+  * */
+  send_raw(data: string, config: RequestConfig): Promise<string> {
+    if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));
+    if (config.batch) return this.make_batch_request(data);
     return new Promise((ok, _) => {
       this.responses.set(this.request_idx, { ok, body: '' });
-      this.make_request_blocking(data);
+      if (config.blocks) this.make_request_blocking(data);
+      else this.make_request_nonblocking(data);
     });
   }
 
   /**
    * Converts the given object and sends it to the server. The server must implement that object request type
    */
-  async send_object(obj: object) {
-    return JSON.parse(await this.send_raw(JSON.stringify(obj)));
+  async send_object(obj: object, config: RequestConfig = default_request_config()) {
+    return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
   }
 
   /**
@@ -183,4 +210,3 @@ export class EnchantedClient {
   handle_response(content: string, id: number) {
   }
 }
-

@@ -69,6 +69,9 @@ export class ServerBatchedMessage implements SystemMessage {
       }
     })
   }
+  /**
+  * Clears the data and the responses array, not data from the message itself
+  */
   reset() {
     this.responses.length = 0;
     this.response_buffer = "";

@@ -90,6 +90,9 @@ export class ClientBatchMessage implements SystemMessage {
       }
     })
   }
+  /**
+  * Clears the internal buffer and the requests array. Not data from the message itself
+  */
   clear() {
     this.request_buffer = "";
     this.requests.length = 0;

@@ -1,5 +1,5 @@
 import { system, } from "@minecraft/server";
-import { EnchantedClient, RequestConfig } from "../client/client";
+import { EnchantedClient, RequestConfig, ClientConfig } from "../client/client";
 import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage } from "../client/message.ts"
 import { RequestType, ResponseType } from "../common/types.ts";
 import { send_batch, send_response, send_response_blocking } from "./internals.ts";
@@ -43,16 +43,24 @@ system.afterEvents.scriptEventReceive.subscribe(e => {
   }
 });
 
+export interface ServerConfig extends ClientConfig {
+  block_request: boolean;
+}
+//a server can be a client as well
 export class EnchantedServer extends EnchantedClient {
   static running_server: EnchantedServer | null = null;
 
   static requests: Map<string, Map<number, EnchantedRequest>> = new Map;
-
-  constructor(config: RequestConfig) {
+  config: ServerConfig;
+  constructor(config: ServerConfig) {
     super(config);
     EnchantedServer.running_server ??= this;
   }
 
+  /**
+   * Server handler wen asked to prepare a request. If the target id doesn't match with this server id, nothing happens.
+   * @param message The message with client and request information
+   */
   public receive_initialization(message: ClientInitializationMessage) {
     if (this.config.uuid != message.server_id) return false;
     const request = EnchantedServer.requests.get(message.client_id);
@@ -61,29 +69,65 @@ export class EnchantedServer extends EnchantedClient {
     return true;
   }
 
+  /**
+   * A server handler for when receiving a packet request. (maybe)Is not the total request body, but instead, a streammed part of it.
+   * @param message The client message with the informations about the packet
+   * @obs The content of the message is compressed
+   */
   public receive_client_packet(message: ClientPacketMessage) {
     if (message.server_id != this.config.uuid) return false;
     const request = EnchantedServer.requests.get(message.client_id);
     if (!request) throw new Error(`Not recognized client: ${message.client_id}`);
     request.get(message.request_index)!.content += message.content;
-
     return true;
   }
 
-
+  /**
+   * A server handler for when receiving a batch request. If this is received, it handles all the requests and sends back to the client immediatly.
+   * Diferent of normal requests, this is expected to have a lot of requests in once, so no needs for telling when initialize or finish.
+   */
   public receive_client_batch(message: ClientBatchMessage) {
     if (message.server_id != this.config.uuid) return false;
-    const batch_message = new ServerBatchedMessage(message.client_id);
+    const server_message = new ServerBatchedMessage(message.client_id);
+    if (this.config.block_request) this.handle_batch_blocking(message, server_message);
+    else system.runJob(this.handle_batch_nonblocking(message, server_message))
+    return true;
+  }
+
+  /**
+  * Batches an specific amount of request. It handles all of them and keeps adding on the server_message param, when it's needed to be sent, its sent.
+  * As this functino does not block, it sends a batch per tick. If there are 4 batches required, is 4 ticks needed, but remember, if these responses are not big, then 1 tick can mean >100 requests.
+  */
+  private *handle_batch_nonblocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
     for (const request of message.requests) {
       const response = this.handle_request(request.body, message.client_id, request.id);
-      if (response.length + batch_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
-        send_batch(batch_message);
-        batch_message.reset();
+      if (response.length + server_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        yield send_batch(server_message);
+        server_message.reset();
       }
-      batch_message.add_response(response, request.id);
+      server_message.add_response(response, request.id);
     }
   }
 
+  /**
+  * Batches an specific amount of request. It handles all of them and keeps adding on the server_message param, when it's needed to be sent, its sent.
+  * As this function does block, it can send >1 response to the client on the same tick.
+  */
+  public handle_batch_blocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
+    for (const request of message.requests) {
+      const response = this.handle_request(request.body, message.client_id, request.id);
+      if (response.length + server_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        send_batch(server_message);
+        server_message.reset();
+      }
+      server_message.add_response(response, request.id);
+    }
+  }
+
+  /**
+   * A server handler for when an usual request is finalized and the server is asked to give it a response.
+   * @param message The message sent by the client with information about the request.
+   */
   public receive_client_finalization(message: ClientFinalizationMessage) {
     if (this.config.uuid != message.server_id) return false;
     const request = EnchantedServer.requests.get(message.client_id);
@@ -92,8 +136,8 @@ export class EnchantedServer extends EnchantedClient {
     const content = decompress(request.get(message.request_index)!.content);
 
     const response = this.handle_request(content, message.client_id, message.request_index);
-
-    send_response_blocking(compress(response), message.client_id, message.request_index);
+    if (this.config.block_request) send_response(compress(response), message.client_id, message.request_index);
+    else send_response_blocking(compress(response), message.client_id, message.request_index);
 
     request.delete(message.request_index);
     return true;

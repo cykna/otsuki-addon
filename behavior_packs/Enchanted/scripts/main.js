@@ -683,12 +683,19 @@ class ServerBatchedMessage {
 // src/common/constants.ts
 var RequestConstants;
 ((RequestConstants) => {
-  RequestConstants.LIMIT = 2048;
+  RequestConstants.SIZE_LIMIT = 2048;
   RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT = 2048 * 1.3;
   RequestConstants.REQUEST_AMOUNT_LIMIT = 4096;
 })(RequestConstants ||= {});
 
 // src/client/client.ts
+function default_request_config() {
+  return {
+    batch: false,
+    blocks: false
+  };
+}
+
 class EnchantedClient {
   config;
   batch_message;
@@ -724,6 +731,11 @@ class EnchantedClient {
     if (message.client_id != this.config.uuid)
       return false;
     for (const response of message.responses) {
+      const res = this.responses.get(response.id);
+      if (!res)
+        return;
+      res.ok(response.body);
+      this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
   }
@@ -752,7 +764,7 @@ class EnchantedClient {
     const message = new ClientInitializationMessage(this.config.uuid, this.config.target, this.request_idx);
     system.sendScriptEvent("enchanted:request" /* Initialization */, message.encode());
   }
-  *make_request(content) {
+  *make_request_nonblocking(content) {
     const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = import_lz_string.compress(content);
     const id = this.request_idx;
@@ -787,33 +799,35 @@ class EnchantedClient {
     const compressed = import_lz_string.compress(encoded);
     system.sendScriptEvent("enchanted:batch_request" /* BatchRequest */, compressed);
   }
-  send_raw(data) {
+  make_batch_request(data) {
+    if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: "" });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      });
+    } else {
+      this.batch_requests_blocking();
+      this.batch_message.clear();
+      this.batch_message.add_request(data, this.request_idx);
+      return new Promise((ok, _) => {
+        this.responses.set(this.request_idx, { ok, body: "" });
+        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+      });
+    }
+  }
+  send_raw(data, config) {
     if (!this.config.target)
       return new Promise((_, err) => err(new Error("Client does not have a target")));
-    if (this.config.batch_request) {
-      if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: "" });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        });
-      } else {
-        this.batch_requests_blocking();
-        this.batch_message.clear();
-        this.batch_message.add_request(data, this.request_idx);
-        return new Promise((ok, _) => {
-          this.responses.set(this.request_idx, { ok, body: "" });
-          this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-        });
-      }
-    }
+    if (config.batch)
+      return this.make_batch_request(data);
     return new Promise((ok, _) => {
       this.responses.set(this.request_idx, { ok, body: "" });
       this.make_request_blocking(data);
     });
   }
-  async send_object(obj) {
-    return JSON.parse(await this.send_raw(JSON.stringify(obj)));
+  async send_object(obj, config = default_request_config()) {
+    return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
   }
   handle_response(content, id) {
   }
@@ -944,6 +958,24 @@ class EnchantedServer extends EnchantedClient {
   receive_client_batch(message) {
     if (message.server_id != this.config.uuid)
       return false;
+    if (this.config.blocks_thread)
+      this.handle_batch_blocking(message);
+    else
+      system3.runJob(this.handle_batch_nonblocking(message));
+    return true;
+  }
+  *handle_batch_nonblocking(message) {
+    const batch_message = new ServerBatchedMessage(message.client_id);
+    for (const request of message.requests) {
+      const response = this.handle_request(request.body, message.client_id, request.id);
+      if (response.length + batch_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        yield send_batch(batch_message);
+        batch_message.reset();
+      }
+      batch_message.add_response(response, request.id);
+    }
+  }
+  handle_batch_blocking(message) {
     const batch_message = new ServerBatchedMessage(message.client_id);
     for (const request of message.requests) {
       const response = this.handle_request(request.body, message.client_id, request.id);
@@ -1038,6 +1070,7 @@ class RouteServer extends EnchantedServer {
 // src/main.ts
 new RouteServer({
   uuid: "enchanted",
+  blocks_thread: false,
   piece_len: 2048
 }).route("/", () => {
   return "hello world";

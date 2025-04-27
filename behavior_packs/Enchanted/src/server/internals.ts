@@ -3,6 +3,7 @@ import { EnchantedServer } from "./server";
 import { ResponseType } from "../common/types";
 import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage } from "./message.ts";
 import { compress } from "lz-string";
+import { ClientBatchMessage } from "../client/message.ts";
 
 /**
  * Sends the given buffer to the target by streamming if compressed contents are larger than 2Kb
@@ -55,7 +56,10 @@ export function send_response_blocking(response: string, target: string, id: num
 
 }
 
+//Internal, should not be used
 export function send_batch(message: ServerBatchedMessage) {
   const content = compress(message.encode());
   system.sendScriptEvent(ResponseType.BatchResponse, content);
 }
+
+

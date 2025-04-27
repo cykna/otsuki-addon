@@ -1,4 +1,4 @@
-import { RequestConfig } from "../client/client";
+import { ClientConfig, RequestConfig } from "../client/client";
 import { EnchantedResponse, ErrorResponse } from "../common/Response";
 import { EnchantedServer } from "./server";
 
@@ -15,7 +15,7 @@ export interface RoutedRequest<T> {
 
 export class RouteServer extends EnchantedServer {
   private routes = new Map<string, Routing>();
-  constructor(config: RequestConfig) {
+  constructor(config: ClientConfig) {
     super(config);
   }
   route(route: string, fn: RouteFn) {
