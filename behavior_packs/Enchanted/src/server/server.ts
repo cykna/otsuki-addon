@@ -1,16 +1,15 @@
 import { system, } from "@minecraft/server";
-import { EnchantedClient, RequestConfig, ClientConfig } from "../client/client";
-import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage } from "../client/message.ts"
-import { RequestType, ResponseType } from "../common/types.ts";
+import { ClientConfig } from "../common/typings/client.ts";
+import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage } from "../common/messages/client.ts"
+import { RequestType } from "../common/types.ts";
 import { send_batch, send_response, send_response_blocking } from "./internals.ts";
 import { compress, decompress } from "lz-string";
-import { ClientBatchMessage } from "../../../otsuki/src/client/message.ts";
-import { ServerBatchedMessage } from "./message.ts";
+import { ClientBatchMessage } from "../common/messages/client.ts";
+import { ServerBatchedMessage } from "../common/messages/server.ts";
 import { RequestConstants } from "../common/constants.ts";
+import { EnchantedClient } from "../client/client.ts";
+import { EnchantedRequest } from "../common/typings/server.ts";
 
-export interface EnchantedRequest {
-  content: string;
-};
 
 system.afterEvents.scriptEventReceive.subscribe(e => {
   if (!EnchantedServer.running_server) return;

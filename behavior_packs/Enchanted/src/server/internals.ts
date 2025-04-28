@@ -1,9 +1,8 @@
 import { system } from "@minecraft/server";
 import { EnchantedServer } from "./server";
 import { ResponseType } from "../common/types";
-import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage } from "./message.ts";
+import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage } from "../common/messages/server.ts";
 import { compress } from "lz-string";
-import { ClientBatchMessage } from "../client/message.ts";
 
 /**
  * Sends the given buffer to the target by streamming if compressed contents are larger than 2Kb

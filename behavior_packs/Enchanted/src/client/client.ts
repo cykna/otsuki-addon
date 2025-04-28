@@ -1,32 +1,10 @@
 import { system } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
-import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "./message.ts";
-import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../server/message.ts";
+import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "../common/messages/client.ts";
+import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../common/messages/server.ts"
 import { RequestType, ResponseType } from "../common/types.ts";
+import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
 import { RequestConstants } from "../common/constants.ts";
-
-
-export interface ClientConfig {
-  target?: string;
-  uuid: string;
-}
-
-export interface ResponseData {
-  body: string;
-  ok(value: string): any;
-}
-
-export interface RequestConfig {
-  batch: boolean,
-  blocks: boolean
-}
-
-export function default_request_config(): RequestConfig {
-  return {
-    batch: false,
-    blocks: false
-  }
-}
 
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself

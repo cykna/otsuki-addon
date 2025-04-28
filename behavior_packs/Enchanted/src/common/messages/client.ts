@@ -1,4 +1,4 @@
-import { SystemMessage } from "../common/message";
+import { SystemMessage } from "./message";
 
 /**
  * A client message to the server of requesting initialization

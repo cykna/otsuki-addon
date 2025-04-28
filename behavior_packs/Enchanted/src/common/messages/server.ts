@@ -1,4 +1,4 @@
-import { SystemMessage } from "../common/message";
+import { SystemMessage } from "./message";
 
 /**
  * A server message to the client telling it to finalize a request and handle it

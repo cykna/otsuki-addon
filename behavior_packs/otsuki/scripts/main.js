@@ -478,7 +478,7 @@ var require_lz_string = __commonJS((exports, module) => {
 });
 
 // src/main.ts
-import { world as world2 } from "@minecraft/server";
+import { world } from "@minecraft/server";
 
 // src/client/client.ts
 var import_lz_string = __toESM(require_lz_string(), 1);
@@ -750,27 +750,25 @@ class EnchantedClient {
     system.sendScriptEvent("enchanted:request" /* Initialization */, message.encode());
   }
   *make_request_nonblocking(content) {
-    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = import_lz_string.compress(content);
     const id = this.request_idx;
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target, this.config.uuid, "", this.request_idx);
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length;i < j; ) {
-      message.content = compressed.substring(i, i += splitlen);
+      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
       yield system.sendScriptEvent("enchanted:request_data" /* PacketData */, message.encode());
     }
     this.finalize_request(id);
   }
   make_request_blocking(content) {
-    const splitlen = Math.min(this.config.piece_len, RequestConstants.SIZE_LIMIT);
     const compressed = import_lz_string.compress(content);
     const id = this.request_idx;
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target, this.config.uuid, "", this.request_idx);
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length;i < j; ) {
-      message.content = compressed.substring(i, i += splitlen);
+      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
       system.sendScriptEvent("enchanted:request_data" /* PacketData */, message.encode());
     }
     this.finalize_request(id);
@@ -779,7 +777,7 @@ class EnchantedClient {
     const message = new ClientFinalizationMessage(this.config.uuid, this.config.target, id).encode();
     system.sendScriptEvent("enchanted:finalize_request" /* Finalization */, message);
   }
-  batch_requests_blocking() {
+  batch_request() {
     const encoded = this.batch_message.encode();
     const compressed = import_lz_string.compress(encoded);
     system.sendScriptEvent("enchanted:batch_request" /* BatchRequest */, compressed);
@@ -792,7 +790,7 @@ class EnchantedClient {
         this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
       });
     } else {
-      this.batch_requests_blocking();
+      this.batch_request();
       this.batch_message.clear();
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
@@ -824,15 +822,14 @@ class EnchantedClient {
 // src/main.ts
 var client = new EnchantedClient({
   target: "enchanted",
-  piece_len: 2048,
   uuid: "seupai"
 });
-world2.afterEvents.playerBreakBlock.subscribe(async (e) => {
+world.afterEvents.playerBreakBlock.subscribe(async (e) => {
   let i = 0;
   const now = Date.now();
   while (Date.now() - now < 1000) {
     let j = i;
-    client.send_object({ route: "/" }).then((e2) => world2.sendMessage(j.toString()));
+    client.send_object({ route: "/" }).then((e2) => world.sendMessage(j.toString()));
     i++;
   }
   console.log("Sent a total of", i, "requests");
