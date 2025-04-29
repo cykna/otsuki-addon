@@ -1,7 +1,7 @@
 import { system } from "@minecraft/server";
 import { compress, decompress } from "lz-string";
-import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "../common/messages/client.ts";
-import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../common/messages/server.ts"
+import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage, ClientSingleResquestMessage } from "../common/messages/client.ts";
+import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts"
 import { RequestType, ResponseType } from "../common/types.ts";
 import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
 import { RequestConstants } from "../common/constants.ts";
@@ -37,21 +37,43 @@ export class EnchantedClient {
           message.decode(decompressed);
           this.receive_batch(message);
         }
+        case ResponseType.SingleResponse: {
+          const message = new ServerSingleResponseMessage('', 0, '');
+          message.decode(e.message);
+          this.receive_single(message);
+        }
       }
     });
   }
 
+  /**
+   * A handler for when this client receives a single scriptEvent call response.
+   */
+  protected receive_single(message: ServerSingleResponseMessage) {
+    if (message.client_id != this.config.uuid) return false;
+    const res = this.responses.get(message.request_index);
+    if (!res) return false;
+    const body = decompress(message.content);
+    res.ok(body);
+    this.responses.delete(message.request_index);
+    this.handle_response(body, message.request_index);
+    return true;
+  }
+
+  /**
+   * A handler for when this client receives a batched response
+   */
   protected receive_batch(message: ServerBatchedMessage) {
     if (message.client_id != this.config.uuid) return false;
     for (const response of message.responses) {
       const res = this.responses.get(response.id);
-      if (!res) return;
+      if (!res) continue;
       res.ok(response.body);
       this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
+    return true;
   }
-
   /**
    * A handler for when this client receives some packet from the server. If overrided, recommended to still execute the default one.
    */
@@ -105,6 +127,16 @@ export class EnchantedClient {
 
   }
 
+  /**
+   * A single request is a request that needs only 1 scriptEvent call. It's better for requests that the body size is known to be <2kb.
+   * So there's no need to initialize on server, stream and finalize, which would cost at least 3 scripEvent call
+   */
+  private make_single_request(content: string) {
+    const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
+    message.content = compress(content);
+    system.sendScriptEvent(RequestType.SingleRequest, message.encode());
+    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+  }
   /**
    * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
    * The formula to calculate the amount of scriptevents will be sent is 2 + ceil(N / 2048). N is the length in chars of the content compressed.. 2 is because of 1 from initializing and another 1 from finishing

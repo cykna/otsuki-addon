@@ -1,11 +1,11 @@
 import { system, } from "@minecraft/server";
 import { ClientConfig } from "../common/typings/client.ts";
-import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage } from "../common/messages/client.ts"
+import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts"
 import { RequestType } from "../common/types.ts";
-import { send_batch, send_response, send_response_blocking } from "./internals.ts";
+import { send_batch, send_response, send_response_blocking, send_single } from "./internals.ts";
 import { compress, decompress } from "lz-string";
 import { ClientBatchMessage } from "../common/messages/client.ts";
-import { ServerBatchedMessage } from "../common/messages/server.ts";
+import { ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
 import { RequestConstants } from "../common/constants.ts";
 import { EnchantedClient } from "../client/client.ts";
 import { EnchantedRequest } from "../common/typings/server.ts";
@@ -38,6 +38,12 @@ system.afterEvents.scriptEventReceive.subscribe(e => {
       const message = new ClientBatchMessage('', '');
       message.decode(decompressed_message);
       EnchantedServer.running_server.receive_client_batch(message);
+      break;
+    }
+    case RequestType.SingleRequest: {
+      const message = new ClientSingleResquestMessage('', '', 0);
+      message.decode(e.message);
+      EnchantedServer.running_server.receive_client_single(message);
     }
   }
 });
@@ -56,6 +62,18 @@ export class EnchantedServer extends EnchantedClient {
     EnchantedServer.running_server ??= this;
   }
 
+  public receive_client_single(message: ClientSingleResquestMessage) {
+    if (message.server_id != this.config.uuid) return false;
+    const decompressed = decompress(message.content);
+    const response = compress(this.handle_request(decompressed, message.client_id, message.request_index));
+    if (response.length > 2048) {
+      send_response(response, message.client_id, message.request_index);
+    } else {
+      const server_message = new ServerSingleResponseMessage(message.client_id, message.request_index, response);
+      send_single(server_message);
+    }
+    return true;
+  }
   /**
    * Server handler wen asked to prepare a request. If the target id doesn't match with this server id, nothing happens.
    * @param message The message with client and request information

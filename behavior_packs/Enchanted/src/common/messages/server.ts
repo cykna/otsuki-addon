@@ -77,3 +77,18 @@ export class ServerBatchedMessage implements SystemMessage {
     this.response_buffer = "";
   }
 }
+
+export class ServerSingleResponseMessage implements SystemMessage {
+  constructor(public client_id: string, public request_index: number, public content: string) {
+  }
+
+  encode(): string {
+    return `${this.client_id}\x01${this.request_index}\x01${this.content}`;
+  }
+  decode(content: string): void {
+    const [client, index, body] = content.split("\x01", 3);
+    this.client_id = client;
+    this.request_index = parseInt(index);
+    this.content = body;
+  }
+}

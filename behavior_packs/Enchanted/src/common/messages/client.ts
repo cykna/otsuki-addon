@@ -98,3 +98,20 @@ export class ClientBatchMessage implements SystemMessage {
     this.requests.length = 0;
   }
 }
+
+export class ClientSingleResquestMessage implements SystemMessage {
+  public content = "";
+  constructor(public client_id: string, public server_id: string, public request_index: number) { }
+
+  encode(): string {
+    return `${this.client_id}\x01${this.server_id}\x01${this.request_index}\x01${this.content}`;
+  }
+  decode(content: string): void {
+    "client\x01server\x01:n\x01req"
+    const [client, server, id, body] = content.split('\x01', 4);
+    this.client_id = client;
+    this.server_id = server;
+    this.request_index = parseInt(id);
+    this.content = body;
+  }
+}

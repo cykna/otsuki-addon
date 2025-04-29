@@ -1,13 +1,14 @@
 import { system } from "@minecraft/server";
 import { EnchantedServer } from "./server";
 import { ResponseType } from "../common/types";
-import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage } from "../common/messages/server.ts";
+import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
 import { compress } from "lz-string";
 
 /**
  * Sends the given buffer to the target by streamming if compressed contents are larger than 2Kb
  */
 export function* send_packet(buffer: string, target: string, id: number) {
+  if (EnchantedServer.running_server == null) throw new Error("No Server is running to send a response. Error on server implementation");
 
   const message = new ServerPacketMessage(target, id, '');
 
@@ -34,6 +35,7 @@ export function* send_response(response: string, target: string, id: number) {
  * This function is literally the same as send_packet but without being a generator
  */
 export function send_packet_blocking(buffer: string, target: string, id: number) {
+  if (EnchantedServer.running_server == null) throw new Error("No Server is running to send a response. Error on server implementation");
 
   const message = new ServerPacketMessage(target, id, '');
 
@@ -61,4 +63,9 @@ export function send_batch(message: ServerBatchedMessage) {
   system.sendScriptEvent(ResponseType.BatchResponse, content);
 }
 
-
+/**
+ * Sends a single response back to the client
+ */
+export function send_single(message: ServerSingleResponseMessage) {
+  system.sendScriptEvent(ResponseType.SingleResponse, message.encode());
+}
