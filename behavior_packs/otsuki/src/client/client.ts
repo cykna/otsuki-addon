@@ -1,33 +1,19 @@
 import { system } from "@minecraft/server";
-import { compress, decompress } from "lz-string";
-import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage } from "./message.ts";
-import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage } from "../server/message.ts";
+import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage, ClientSingleResquestMessage } from "../common/messages/client.ts";
+import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts"
 import { RequestType, ResponseType } from "../common/types.ts";
+import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
 import { RequestConstants } from "../common/constants.ts";
+import murmurhash from "murmurhash";
+import { compress_cbor_pako, decompress_cbor_pako } from "../common/compression/index.ts";
 
-
-export interface ClientConfig {
-  target?: string;
-  uuid: string;
+/**
+ * Returns a client id. Is not meant to be readable, but used when passing data between addons
+ */
+function client_id(id: string) {
+  const hash = murmurhash.v3(id);
+  return String.fromCharCode((hash >>> 16) & 0xffff, hash & 0xffff);
 }
-
-export interface ResponseData {
-  body: string;
-  ok(value: string): any;
-}
-
-export interface RequestConfig {
-  batch: boolean,
-  blocks: boolean
-}
-
-export function default_request_config(): RequestConfig {
-  return {
-    batch: false,
-    blocks: false
-  }
-}
-
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */
@@ -38,7 +24,10 @@ export class EnchantedClient {
   protected responses: Map<number, ResponseData> = new Map;
 
   constructor(protected readonly config: ClientConfig) {
+    this.config.uuid = client_id(config.uuid);
+    if (this.config.target) this.config.target = client_id(this.config.target);
     this.batch_message = new ClientBatchMessage(config.uuid, config.target!);
+    this.request_idx = 0;
     system.afterEvents.scriptEventReceive.subscribe(e => {
       switch (e.id) {
         case ResponseType.PacketData: {
@@ -55,38 +44,60 @@ export class EnchantedClient {
         }
         case ResponseType.BatchResponse: {
           const message = new ServerBatchedMessage('');
-          const decompressed = decompress(e.message);
+          const decompressed = decompress_cbor_pako(e.message);
           message.decode(decompressed);
           this.receive_batch(message);
+        }
+        case ResponseType.SingleResponse: {
+          const message = new ServerSingleResponseMessage('', 0, '');
+          message.decode(e.message);
+          this.receive_single(message);
         }
       }
     });
   }
 
+  /**
+   * A handler for when this client receives a single scriptEvent call response.
+   */
+  protected receive_single(message: ServerSingleResponseMessage) {
+    if (message.client_id != this.config.uuid) return false;
+    const res = this.responses.get(message.request_index);
+    if (!res) return false;
+    const body = decompress_cbor_pako(message.content);
+    res.ok(body);
+    this.responses.delete(message.request_index);
+    this.handle_response(body, message.request_index);
+    return true;
+  }
+
+  /**
+   * A handler for when this client receives a batched response
+   */
   protected receive_batch(message: ServerBatchedMessage) {
     if (message.client_id != this.config.uuid) return false;
     for (const response of message.responses) {
       const res = this.responses.get(response.id);
-      if (!res) return;
+      if (!res) continue;
       res.ok(response.body);
       this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
+    return true;
   }
-
   /**
    * A handler for when this client receives some packet from the server. If overrided, recommended to still execute the default one.
    */
   protected receive_packet(message: ServerPacketMessage): boolean {
     if (message.target != this.config.uuid) return false;
-    this.responses.get(message.response_index)!.body += message.content;
+    this.responses.get(message.response_index)!.body.push(message.content);
     return true;
   }
 
   protected handle_indexed_response(index: number) {
     const res = this.responses.get(index);
     if (!res) return;
-    const decompressed = decompress(res.body);
+    const decompressed = decompress_cbor_pako(res.body.join(""));
     res.ok(decompressed);
     this.responses.delete(index);
     this.handle_response(decompressed, index);
@@ -113,7 +124,7 @@ export class EnchantedClient {
   */
   private *make_request_nonblocking(content: string) {
 
-    const compressed = compress(content);
+    const compressed = compress_cbor_pako(content);
     const id = this.request_idx;
 
     this.initialize_request();
@@ -128,12 +139,22 @@ export class EnchantedClient {
   }
 
   /**
+   * A single request is a request that needs only 1 scriptEvent call. It's better for requests that the body size is known to be <2kb.
+   * So there's no need to initialize on server, stream and finalize, which would cost at least 3 scripEvent call
+   */
+  private make_single_request(content: string) {
+    const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
+    message.content = compress_cbor_pako(content);
+    system.sendScriptEvent(RequestType.SingleRequest, message.encode());
+    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+  }
+  /**
    * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
    * The formula to calculate the amount of scriptevents will be sent is 2 + ceil(N / 2048). N is the length in chars of the content compressed.. 2 is because of 1 from initializing and another 1 from finishing
    */
   private make_request_blocking(content: string) {
 
-    const compressed = compress(content);
+    const compressed = compress_cbor_pako(content);
     const id = this.request_idx;
 
     this.initialize_request();
@@ -160,7 +181,7 @@ export class EnchantedClient {
    */
   private batch_request() {
     const encoded = this.batch_message.encode();
-    const compressed = compress(encoded);
+    const compressed = compress_cbor_pako(encoded);
     system.sendScriptEvent(RequestType.BatchRequest, compressed);
   }
 
@@ -168,7 +189,7 @@ export class EnchantedClient {
     if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
-        this.responses.set(this.request_idx, { ok, body: '' });
+        this.responses.set(this.request_idx, { ok, body: [] });
         this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
       });
     } else {
@@ -176,22 +197,28 @@ export class EnchantedClient {
       this.batch_message.clear();
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
-        this.responses.set(this.request_idx, { ok, body: '' });
+        this.responses.set(this.request_idx, { ok, body: [] });
         this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
       })
     }
   }
 
   /**
-  * Compress the given data and requests it to Enchanted Server target.
+  * compress_cbor_pako the given data and requests it to Enchanted Server target.
   * */
   send_raw(data: string, config: RequestConfig): Promise<string> {
+
     if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));
     if (config.batch) return this.make_batch_request(data);
     return new Promise((ok, _) => {
-      this.responses.set(this.request_idx, { ok, body: '' });
-      if (config.blocks) this.make_request_blocking(data);
-      else this.make_request_nonblocking(data);
+      this.responses.set(this.request_idx, { ok, body: [] });
+      if (data.length > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        if (config.blocks) this.make_request_blocking(data);
+        else this.make_request_nonblocking(data);
+      }
+      else {
+        this.make_single_request(data);
+      }
     });
   }
 

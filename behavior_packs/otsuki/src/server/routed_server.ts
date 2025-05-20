@@ -1,10 +1,14 @@
-//imma call it mdtp -> minecraft data transfer protocol
+//imma call it matp -> minecraft addons transfering protocol
 import { ROUTES_KEY } from "./decorators.ts";
+import { ClientConfig } from "../common/typings/client.ts"
 import Memoirist from "memoirist";
 import { Response, ResponseJson } from "../common/Response";
-import { EnchantedServer, ServerConfig } from "./server.ts";
+//import { EnchantedServer } from "./server";
 import { RoutingFunc, Throwable } from "../common/types";
 
+class EnchantedServer {
+  constructor(config: ClientConfig) { }
+}
 
 export interface RoutedRequest<T> {
   route: string;
@@ -15,24 +19,13 @@ export interface ServerConfiguration {
   accepted_clients: string[] | '*'
 }
 
-export interface ErrorHandlerInterface {
-  handle(e: Error): ResponseJson;
-}
-
-export class ErrorHandler implements ErrorHandlerInterface {
-  handle(e: Error): ResponseJson {
-    return Response.InternalError(e.message);
-  }
-}
-
 export class RouteServer extends EnchantedServer {
   protected inner = new Memoirist<RoutingFunc>();
   protected accept_all = false;
   protected accepted_clients = new Set<string>();
-  protected error_handler: ErrorHandler = new ErrorHandler;
-  constructor(config: ServerConfig) {
+
+  constructor(config: ClientConfig) {
     super(config);
-    this.config = config;
   }
 
   configure(config: ServerConfiguration) {
@@ -49,12 +42,8 @@ export class RouteServer extends EnchantedServer {
   async handle<T>(obj: RoutedRequest<T>, target: string, id: number): Throwable<Promise<Throwable<ResponseJson>>> {
     const handler = this.inner.find('GET', obj.route);
     if (handler == null) return Response.NotFound(`Route '${obj.route}' was not found!`);
-    try {
-      const result = handler.store(obj.content, handler.params, target, id);
-      return result instanceof Promise ? result.catch(e => this.error_handler.handle(e)).then(e => typeof e != 'object' ? Response.Success(e) : e) : Response.Success(result);
-    } catch (e) {
-      return this.error_handler.handle(e);
-    }
+    const result = handler.store(obj.content, handler.params, target, id);
+    return result instanceof Promise ? result.then(v => v).catch(e => Response.InternalError(e)) : result;
   }
 
   use_controller(controller: typeof RouteServerController) {
@@ -73,6 +62,7 @@ export class RouteServer extends EnchantedServer {
     }
   }
   async handle_request(req: string, client: string, req_id: number): Promise<string> {
+    console.warn(req);
     if (!this.accept_all && !this.accepted_clients.has(client)) return Response.Stringify(Response.NotEnoughPermission("Client not able to do requests to this server"));
     return this.handle(JSON.parse(req), client, req_id).then(JSON.stringify);
   }

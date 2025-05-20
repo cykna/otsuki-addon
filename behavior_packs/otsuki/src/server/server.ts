@@ -3,7 +3,7 @@ import { ClientConfig } from "../common/typings/client.ts";
 import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts"
 import { RequestType } from "../common/types.ts";
 import { send_batch, send_response, send_response_blocking, send_single } from "./internals.ts";
-import { decompress_cbor_pako, compress_cbor_pako } from "../common/compression/index.ts";
+import { compress, decompress } from "lz-string";
 import { ClientBatchMessage } from "../common/messages/client.ts";
 import { ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
 import { RequestConstants } from "../common/constants.ts";
@@ -12,7 +12,6 @@ import { EnchantedRequest } from "../common/typings/server.ts";
 
 
 system.afterEvents.scriptEventReceive.subscribe(e => {
-
   if (!EnchantedServer.running_server) return;
 
   switch (e.id) {
@@ -35,7 +34,7 @@ system.afterEvents.scriptEventReceive.subscribe(e => {
       break;
     }
     case RequestType.BatchRequest: {
-      const decompressed_message = decompress_cbor_pako(e.message);
+      const decompressed_message = decompress(e.message);
       const message = new ClientBatchMessage('', '');
       message.decode(decompressed_message);
       EnchantedServer.running_server.receive_client_batch(message);
@@ -65,9 +64,9 @@ export class EnchantedServer extends EnchantedClient {
 
   public receive_client_single(message: ClientSingleResquestMessage) {
     if (message.server_id != this.config.uuid) return false;
-    const decompressed = decompress_cbor_pako(message.content);
+    const decompressed = decompress(message.content);
     this.handle_request(decompressed, message.client_id, message.request_index).then(res => {
-      const response = compress_cbor_pako(res);
+      const response = compress(res);
       if (response.length > 2048) {
         send_response(response, message.client_id, message.request_index);
       } else {
@@ -155,11 +154,11 @@ export class EnchantedServer extends EnchantedClient {
     const request = EnchantedServer.requests.get(message.client_id);
     if (!request) throw new Error(`Not recognized client: ${message.client_id}`);
 
-    const content = decompress_cbor_pako(request.get(message.request_index)!.content.join(''));
+    const content = decompress(request.get(message.request_index)!.content.join(''));
 
     this.handle_request(content, message.client_id, message.request_index).then(response => {
-      if (this.config.block_request) send_response(compress_cbor_pako(response), message.client_id, message.request_index);
-      else send_response_blocking(compress_cbor_pako(response), message.client_id, message.request_index);
+      if (this.config.block_request) send_response(compress(response), message.client_id, message.request_index);
+      else send_response_blocking(compress(response), message.client_id, message.request_index);
 
       request.delete(message.request_index);
     });

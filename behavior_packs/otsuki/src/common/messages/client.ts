@@ -129,7 +129,7 @@ export class ClientSingleResquestMessage implements SystemMessage {
   decode(content: string): void {
     this.client_id = content.slice(0, 2);
     this.server_id = content.slice(2, 4);
-    this.request_index = content.charCodeAt(4);
-    this.content = content.slice(5);
+    this.request_index = content.charCodeAt(5);
+    this.content = content.slice(6);
   }
 }
