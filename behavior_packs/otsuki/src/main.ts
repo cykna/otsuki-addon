@@ -6,14 +6,22 @@ const client = new EnchantedClient({
   uuid: "cycro:otsuki_client"
 });
 
-world.afterEvents.playerButtonInput.subscribe(e => {
+world.afterEvents.playerButtonInput.subscribe(async e => {
   if (e.button == InputButton.Sneak && e.newButtonState == ButtonState.Released) {
-    client.send_object({
-      route: "/example"
-    }, {
-      blocks: true,
-      batch: false
-    });
+    try {
+      const result = await client.send_object({
+        route: "/example/suamae",
+        content: 12
+      }, {
+        blocks: true,
+        batch: false
+      });
+      console.log(JSON.stringify(result.body));
+    } catch (e) {
+      console.log("Deu erro hein", e.body);
+    }
+    console.log(world.getDynamicProperty("suamae") ?? "deu ruim irmão, não existe nesse addon");
+
   }
 })
 

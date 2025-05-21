@@ -5,7 +5,7 @@ import { RequestType, ResponseType } from "../common/types.ts";
 import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
 import { RequestConstants } from "../common/constants.ts";
 import murmurhash from "murmurhash";
-import { compress_cbor_pako, decompress_cbor_pako } from "../common/compression/index.ts";
+import { compress, decompress } from "../common/compression/index.ts";
 
 /**
  * Returns a client id. Is not meant to be readable, but used when passing data between addons
@@ -30,26 +30,22 @@ export class EnchantedClient {
     system.afterEvents.scriptEventReceive.subscribe(e => {
       switch (e.id) {
         case ResponseType.PacketData: {
-          const server_message = new ServerPacketMessage('', 0, '');
-          server_message.decode(e.message);
+          const server_message = ServerPacketMessage.from(e.message);
           this.receive_packet(server_message);
           break;
         }
         case ResponseType.Finalization: {
-          const message = new ServerFinalizeMessage('', 0);
-          message.decode(e.message);
+          const message = ServerFinalizeMessage.from(e.message);
           this.receive_finalization(message);
           break;
         }
         case ResponseType.BatchResponse: {
-          const message = new ServerBatchedMessage('');
-          const decompressed = decompress_cbor_pako(e.message);
-          message.decode(decompressed);
+          const decompressed = decompress(e.message);
+          const message = ServerBatchedMessage.from(decompressed);
           this.receive_batch(message);
         }
         case ResponseType.SingleResponse: {
-          const message = new ServerSingleResponseMessage('', 0, '');
-          message.decode(e.message);
+          const message = ServerSingleResponseMessage.from(e.message);
           this.receive_single(message);
         }
       }
@@ -63,7 +59,7 @@ export class EnchantedClient {
     if (message.client_id != this.config.uuid) return false;
     const res = this.responses.get(message.request_index);
     if (!res) return false;
-    const body = decompress_cbor_pako(message.content);
+    const body = decompress(message.content);
     res.ok(body);
     this.responses.delete(message.request_index);
     this.handle_response(body, message.request_index);
@@ -96,7 +92,7 @@ export class EnchantedClient {
   protected handle_indexed_response(index: number) {
     const res = this.responses.get(index);
     if (!res) return;
-    const decompressed = decompress_cbor_pako(res.body.join(""));
+    const decompressed = decompress(res.body.join(""));
     res.ok(decompressed);
     this.responses.delete(index);
     this.handle_response(decompressed, index);
@@ -123,7 +119,7 @@ export class EnchantedClient {
   */
   private *make_request_nonblocking(content: string) {
 
-    const compressed = compress_cbor_pako(content);
+    const compressed = compress(content);
     const id = this.request_idx;
 
     this.initialize_request();
@@ -143,7 +139,7 @@ export class EnchantedClient {
    */
   private make_single_request(content: string) {
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
-    message.content = compress_cbor_pako(content);
+    message.content = compress(content);
     system.sendScriptEvent(RequestType.SingleRequest, message.encode());
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
   }
@@ -153,7 +149,7 @@ export class EnchantedClient {
    */
   private make_request_blocking(content: string) {
 
-    const compressed = compress_cbor_pako(content);
+    const compressed = compress(content);
     const id = this.request_idx;
 
     this.initialize_request();
@@ -180,7 +176,7 @@ export class EnchantedClient {
    */
   private batch_request() {
     const encoded = this.batch_message.encode();
-    const compressed = compress_cbor_pako(encoded);
+    const compressed = compress(encoded);
     system.sendScriptEvent(RequestType.BatchRequest, compressed);
   }
 
@@ -203,7 +199,7 @@ export class EnchantedClient {
   }
 
   /**
-  * compress_cbor_pako the given data and requests it to Enchanted Server target.
+  * compress the given data and requests it to Enchanted Server target.
   * */
   send_raw(data: string, config: RequestConfig): Promise<string> {
     if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));

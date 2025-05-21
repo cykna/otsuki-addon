@@ -3,6 +3,7 @@ import { EnchantedServer } from "./server";
 import { ResponseType } from "../common/types";
 import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
 import { compress } from "lz-string";
+import { RequestConstants } from "../common/constants.ts";
 
 /**
  * Sends the given buffer to the target by streamming if compressed contents are larger than 2Kb
@@ -12,8 +13,8 @@ export function* send_packet(buffer: string, target: string, id: number) {
 
   const message = new ServerPacketMessage(target, id, '');
 
-  for (let i = 0, j = buffer.length; i < j; i += 2048) {
-    message.content = buffer.substring(i, i + 2048);
+  for (let i = 0, j = buffer.length; i < j; i += RequestConstants.SIZE_LIMIT) {
+    message.content = buffer.substring(i, i + RequestConstants.SIZE_LIMIT);
     yield system.sendScriptEvent(ResponseType.PacketData, message.encode());
   }
 }
@@ -39,8 +40,8 @@ export function send_packet_blocking(buffer: string, target: string, id: number)
 
   const message = new ServerPacketMessage(target, id, '');
 
-  for (let i = 0, j = buffer.length; i < j; i += 2048) {
-    message.content = buffer.substring(i, i + 2048);
+  for (let i = 0, j = buffer.length; i < j; i += RequestConstants.SIZE_LIMIT) {
+    message.content = buffer.substring(i, i + RequestConstants.SIZE_LIMIT);
     system.sendScriptEvent(ResponseType.PacketData, message.encode());
   }
 }

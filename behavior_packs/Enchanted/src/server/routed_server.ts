@@ -26,10 +26,12 @@ export class ErrorHandler implements ErrorHandlerInterface {
 }
 
 export class RouteServer extends EnchantedServer {
+
   protected inner = new Memoirist<RoutingFunc>();
   protected accept_all = false;
   protected accepted_clients = new Set<string>();
   protected error_handler: ErrorHandler = new ErrorHandler;
+
   constructor(config: ServerConfig) {
     super(config);
     this.config = config;
@@ -49,26 +51,30 @@ export class RouteServer extends EnchantedServer {
   async handle<T>(obj: RoutedRequest<T>, target: string, id: number): Throwable<Promise<Throwable<ResponseJson>>> {
     const handler = this.inner.find('GET', obj.route);
     if (handler == null) return Response.NotFound(`Route '${obj.route}' was not found!`);
+
     try {
       const result = handler.store(obj.content, handler.params, target, id);
-      return result instanceof Promise ? result.catch(e => this.error_handler.handle(e)).then(e => typeof e != 'object' ? Response.Success(e) : e) : Response.Success(result);
+      return result instanceof Promise ? result.then(e => typeof e != 'object' ? Response.Success(e) : e).catch(e => this.error_handler.handle(e)) : typeof result != 'object' ? Response.Success(result) : result;
     } catch (e) {
       return this.error_handler.handle(e);
     }
   }
 
+  /**
+  * Must implement better the controller system.
+  */
   use_controller(controller: typeof RouteServerController) {
     const controller_instance = new controller();
     let controller_route = controller_instance.route;
     if (controller_route == null) {
       for (const [route, handler] of Object.entries(controller_instance[ROUTES_KEY])) {
-        this.route(route, handler as RoutingFunc);
+        this.route(route, (handler as RoutingFunc).bind(controller_instance));
       }
     } else {
       if (controller_route.endsWith("/")) controller_route = controller_route.slice(0, -1);
       for (let [route, handler] of Object.entries(controller_instance[ROUTES_KEY])) {
         if (route[0] == "/") route = route.slice(1);
-        this.route(controller_route + "/" + route, handler as RoutingFunc);
+        this.route(controller_route + "/" + route, (handler as RoutingFunc).bind(controller_instance));
       }
     }
   }

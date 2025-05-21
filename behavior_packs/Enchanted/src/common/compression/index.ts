@@ -1,8 +1,29 @@
 import { decode, encode } from "cbor-x";
 import { TextEncoder } from "fast-text-encoding";
+import { compress as lzcompress, decompress as lzdecompress } from "lz-string";
 import pako from "pako";
 
 globalThis.TextEncoder ??= TextEncoder;
+
+export { lzcompress, lzdecompress };
+
+
+export const enum CompressionMethod {
+  Lz = "L", CborPako = "C"
+}
+
+export function compress(data: string) {
+  const value = data.length < 512 ? `${CompressionMethod.Lz}${lzcompress(data)}` : `${CompressionMethod.CborPako}${compress_cbor_pako(data)}`;
+  return value;
+}
+export function decompress(data: string) {
+  const last = data[0];
+  if (last == CompressionMethod.Lz) return lzdecompress(data.slice(1));
+  else if (last == CompressionMethod.CborPako) return decompress_cbor_pako(data.slice(1));
+  else throw new Error(`Invalid compression method '${last}'. Use 1 for Lz and 2 for Cbor + Pako`);
+}
+
+
 
 
 /**

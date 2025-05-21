@@ -8,6 +8,11 @@ function header(client: string, server: string, req: number) {
  * A client message to the server of requesting initialization
  */
 export class ClientInitializationMessage implements SystemMessage {
+
+  static from(content: string) {
+    return new ClientFinalizationMessage(content.slice(0, 2), content.slice(2, 4), content.charCodeAt(4));
+  }
+
   constructor(public client_id: string, public server_id: string, public request_index: number) { }
 
   /**
@@ -18,22 +23,17 @@ export class ClientInitializationMessage implements SystemMessage {
   encode(): string {
     return this.client_id + this.server_id + String.fromCharCode(this.request_index);
   }
-
-  /**
-   * Decodes the given content setting the related data to this message.
-   * Expects a string following 'encode' function result of this message as parameter.
-   */
-  decode(content: string): void {
-    this.client_id = content.slice(0, 2);
-    this.server_id = content.slice(2, 4);
-    this.request_index = content.charCodeAt(4);
-  }
 }
 /**
  * A client message to the server of a streammed part of the packet.
  */
 export class ClientPacketMessage implements SystemMessage {
-  constructor(public server_id: string, public client_id: string, public content: string, public request_index: number) {
+
+  static from(content: string) {
+    return new ClientPacketMessage(content.slice(0, 2), content.slice(2, 4), content.slice(5), content.charCodeAt(4));
+  }
+
+  constructor(public client_id: string, public server_id: string, public content: string, public request_index: number) {
   }
 
   /**
@@ -44,17 +44,6 @@ export class ClientPacketMessage implements SystemMessage {
   encode(): string {
     return `${header(this.client_id, this.server_id, this.request_index)}${this.content}`;
   }
-
-  /**
-   * Decodes the given content setting the related data to this message.
-   * Expects a string following 'encode' function result of this message as parameter.
-   */
-  decode(content: string): void {
-    this.client_id = content.slice(0, 2);
-    this.server_id = content.slice(2, 4);
-    this.request_index = content.charCodeAt(4);
-    this.content = content.slice(5);
-  }
 }
 
 /**
@@ -62,15 +51,15 @@ export class ClientPacketMessage implements SystemMessage {
  */
 export class ClientFinalizationMessage implements SystemMessage {
 
+  static from(content: string) {
+    return new ClientFinalizationMessage(content.slice(0, 2), content.slice(2, 4), content.charCodeAt(4));
+  }
+
   constructor(public client_id: string, public server_id: string, public request_index: number) {
   }
+
   encode(): string {
     return this.client_id + this.server_id + String.fromCharCode(this.request_index);
-  }
-  decode(content: string) {
-    this.client_id = content.slice(0, 2);
-    this.server_id = content.slice(2, 4);
-    this.request_index = content.charCodeAt(4);
   }
 }
 
@@ -80,35 +69,38 @@ export interface RequestData {
 }
 
 export class ClientBatchMessage implements SystemMessage {
+
+  static from(content: string) {
+    const out = new ClientBatchMessage(content.slice(0, 2), content.slice(2, 4));
+    const len = content.length;
+    for (let i = 4; i < len;) {
+      const req_size = content.charCodeAt(i);
+      const req_id = content.charCodeAt(i + 1);
+      out.requests.push({ body: content.slice(i + 2, i + 2 + req_size), id: req_id });
+      i += req_size;
+    }
+    return out;
+  }
+
   private request_buffer: string[] = [];
   public requests: RequestData[] = [];
   constructor(public client_id: string, public server_id: string) {
 
   }
+
+  /**
+   * The length of requests stored in the internal buffer. Does not represent the actual requests that can be read, but in fact, the stored ones to be sent.
+   */
   len() {
     return this.request_buffer.length;
   }
+
   add_request(req: string, id: number) {
     this.request_buffer.push(String.fromCharCode(req.length) + String.fromCharCode(id) + req);
   }
 
   encode() {
     return `${this.client_id}${this.server_id}${this.request_buffer}`;
-  }
-  decode(content: string): void {
-    this.client_id = content.slice(0, 2);
-    this.server_id = content.slice(2, 4);
-    const len = content.length;
-    let i = 4;
-    for (; i < len;) {
-      const req_size = content.charCodeAt(i);
-      const req_id = content.charCodeAt(i + 1);
-      this.requests.push({
-        body: content.slice(i + 2, i + 2 + req_size),
-        id: req_id
-      });
-      i += req_size;
-    }
   }
   /**
   * Clears the internal buffer and the requests array. Not data from the message itself
@@ -120,16 +112,17 @@ export class ClientBatchMessage implements SystemMessage {
 }
 
 export class ClientSingleResquestMessage implements SystemMessage {
+
+  static from(content: string) {
+    const out = new ClientSingleResquestMessage(content.slice(0, 2), content.slice(2, 4), content.charCodeAt(4));
+    out.content = content.slice(5);
+    return out;
+  }
+
   public content = "";
   constructor(public client_id: string, public server_id: string, public request_index: number) { }
 
   encode(): string {
     return header(this.client_id, this.server_id, this.request_index) + this.content;
-  }
-  decode(content: string): void {
-    this.client_id = content.slice(0, 2);
-    this.server_id = content.slice(2, 4);
-    this.request_index = content.charCodeAt(4);
-    this.content = content.slice(5);
   }
 }
