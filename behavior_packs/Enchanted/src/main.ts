@@ -11,7 +11,12 @@ class MainController extends RouteServerController {
   id = 0;
   @Route("/example/:id")
   public f(body: any, params: Record<string, string>) {
-    console.log(body, JSON.stringify(params));
+    const keys = new Set<string>();
+    for (const i in globalThis) {
+      keys.add(i);
+    }
+    for (const i of Reflect.ownKeys(globalThis)) keys.add(i);
+    for (const key of keys) console.log(key)
     return Response.NotEnoughPermission({
       value: world.getDynamicProperty('suamae'),
       prop: 'suamae'

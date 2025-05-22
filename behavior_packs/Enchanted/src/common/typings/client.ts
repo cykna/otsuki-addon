@@ -1,6 +1,13 @@
+export const enum CachingOption {
+  None,
+  Normal,
+  Continuous
+}
+
 export interface ClientConfig {
   target?: string;
   uuid: string;
+  caching?: CachingOption
 }
 
 export interface ResponseData {
@@ -10,12 +17,14 @@ export interface ResponseData {
 
 export interface RequestConfig {
   batch: boolean,
-  blocks: boolean
+  blocks: boolean,
+  cache: number
 }
 
 export function default_request_config(): RequestConfig {
   return {
     batch: false,
-    blocks: false
+    blocks: false,
+    cache: 0
   }
 }

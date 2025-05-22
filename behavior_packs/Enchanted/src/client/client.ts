@@ -2,28 +2,37 @@ import { system, world } from "@minecraft/server";
 import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage, ClientSingleResquestMessage } from "../common/messages/client.ts";
 import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts"
 import { RequestType, ResponseType } from "../common/types.ts";
-import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
-import { RequestConstants } from "../common/constants.ts";
-import murmurhash from "murmurhash";
+import { ResponseData, ClientConfig, RequestConfig, default_request_config, CachingOption } from "../common/typings/client.ts"
+import { SIZE_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT, REQUEST_AMOUNT_LIMIT } from "@zetha/constants";
 import { compress, decompress } from "../common/compression/index.ts";
+import { murmurhash3_32_gc } from "../common/helpers/murmurhash.ts";
+import { Caching, ContinuousCaching } from "./cache.ts";
+
+export interface ClientResponseData {
+  data: any,
+  was_cached: boolean
+}
 
 /**
  * Returns a client id. Is not meant to be readable, but used when passing data between addons
  */
 function client_id(id: string) {
-  const hash = murmurhash.v3(id);
+  const hash = murmurhash3_32_gc(id);
   return String.fromCharCode((hash >>> 16) & 0xffff, hash & 0xffff);
 }
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */
 export class EnchantedClient {
+  private cache: Caching | ContinuousCaching;
   protected batch_message: ClientBatchMessage;
   protected request_idx = 0;
   //Awaiting promises. In case the responses
   protected responses: Map<number, ResponseData> = new Map;
 
   constructor(protected readonly config: ClientConfig) {
+    if (config.caching == CachingOption.Normal) this.cache = new Caching;
+    else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
     this.config = config;
     this.config.uuid = client_id(this.config.uuid);
     this.batch_message = new ClientBatchMessage(config.uuid, config.target!);
@@ -124,9 +133,9 @@ export class EnchantedClient {
 
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
-    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
+      message.content = compressed.substring(i, i += SIZE_LIMIT);
       yield system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
@@ -138,10 +147,11 @@ export class EnchantedClient {
    * So there's no need to initialize on server, stream and finalize, which would cost at least 3 scripEvent call
    */
   private make_single_request(content: string) {
+    console.log(this.request_idx);
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
     message.content = compress(content);
     system.sendScriptEvent(RequestType.SingleRequest, message.encode());
-    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
   }
   /**
    * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
@@ -154,9 +164,9 @@ export class EnchantedClient {
 
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
-    this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += RequestConstants.SIZE_LIMIT);
+      message.content = compressed.substring(i, i += SIZE_LIMIT);
       system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
@@ -180,12 +190,24 @@ export class EnchantedClient {
     system.sendScriptEvent(RequestType.BatchRequest, compressed);
   }
 
-  private make_batch_request(data: string): Promise<string> {
-    if (this.batch_message.len() + data.length + 1 < RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+  private async make_batch_request(data: string): Promise<ClientResponseData> {
+    {
+      let cached = this.cache.get(data);
+      if (cached) return new Promise((ok, _) => ok({
+        data: cached,
+        was_cached: true
+      }));
+    }
+    if (this.batch_message.len() + data.length + 1 < APPROXIMATED_UNCOMPRESSED_LIMIT) {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
         this.responses.set(this.request_idx, { ok, body: [] });
-        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
+        this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+      }).then(e => {
+        return {
+          data: e,
+          was_cached: false
+        }
       });
     } else {
       this.batch_request();
@@ -193,34 +215,50 @@ export class EnchantedClient {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
         this.responses.set(this.request_idx, { ok, body: [] });
-        this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
-      })
+        this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+      }).then(e => ({ data: e, was_cached: false }));
     }
   }
 
   /**
   * compress the given data and requests it to Enchanted Server target.
   * */
-  send_raw(data: string, config: RequestConfig): Promise<string> {
+  send_raw(data: string, config: RequestConfig): Promise<ClientResponseData> {
     if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));
     if (config.batch) return this.make_batch_request(data);
-    return new Promise((ok, _) => {
+    {
+      let cached = this.cache.get(data);
+      if (cached) return new Promise((ok, _) => ok({
+        data: cached,
+        was_cached: true
+      }));
+    }
+    const out = new Promise((ok, _) => {
       this.responses.set(this.request_idx, { ok, body: [] });
-      if (data.length > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+      if (data.length > APPROXIMATED_UNCOMPRESSED_LIMIT) {
         if (config.blocks) this.make_request_blocking(data);
         else this.make_request_nonblocking(data);
       }
-      else {
-        this.make_single_request(data);
-      }
+      else this.make_single_request(data);
+
     });
+    if (config.cache) out.then(e => {
+      this.cache.insert(data, e, config.cache);
+      return {
+        data: e,
+        was_cached: false
+      };
+    });
+    return out as Promise<ClientResponseData>;
   }
 
   /**
    * Converts the given object and sends it to the server. The server must implement that object request type
    */
   async send_object(obj: object, config: RequestConfig = default_request_config()) {
-    return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
+    const data = await this.send_raw(JSON.stringify(obj), config);
+    if (data.was_cached) return data.data;
+    else return JSON.parse(data.data);
   }
 
   /**

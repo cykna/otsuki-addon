@@ -1,14 +1,9 @@
-export const enum ResponseCode {
-  Success,
-  NotFound,
-  NotEnoughPermission,
-  InvalidCredentials,
-  InternalError,
-}
+import { SuccessCode, NotFoundCode, NotEnoughPermissionCode, InvalidCredentialsCode, InternalErrorCode } from "@zetha/response_code"
+
 
 
 export interface ResponseJson {
-  code: ResponseCode,
+  code: number,
   body: string
 }
 export namespace Response {
@@ -23,7 +18,7 @@ export namespace Response {
       return obj;
     } catch {
       return {
-        code: ResponseCode.InvalidCredentials,
+        code: InvalidCredentialsCode,
         body: JSON.stringify({
           message: "Raw string failed while parsing to valid JSON"
         })
@@ -33,31 +28,31 @@ export namespace Response {
   export function Success<T>(body: T): ResponseJson {
     return {
       body: JSON.stringify(body),
-      code: ResponseCode.Success
+      code: SuccessCode
     }
   }
   export function NotFound<T>(body: T): ResponseJson {
     return {
       body: JSON.stringify(body),
-      code: ResponseCode.NotFound
+      code: NotFoundCode
     }
   }
   export function NotEnoughPermission<T>(body: T): ResponseJson {
     return {
       body: JSON.stringify(body),
-      code: ResponseCode.NotEnoughPermission
+      code: NotEnoughPermissionCode
     }
   }
   export function InvalidCredentials<T>(body: T): ResponseJson {
     return {
       body: JSON.stringify(body),
-      code: ResponseCode.InvalidCredentials
+      code: InvalidCredentialsCode
     }
   }
   export function InternalError<T>(body: T): ResponseJson {
     return {
       body: JSON.stringify(body),
-      code: ResponseCode.InternalError
+      code: InternalErrorCode
     }
   }
 }

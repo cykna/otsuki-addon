@@ -1,4 +1,5 @@
 import { system, } from "@minecraft/server";
+import { SIZE_LIMIT, REQUEST_AMOUNT_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT } from "@zetha/constants";
 import { ClientConfig } from "../common/typings/client.ts";
 import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts"
 import { RequestType } from "../common/types.ts";
@@ -6,7 +7,7 @@ import { send_batch, send_response, send_response_blocking, send_single } from "
 import { decompress, compress } from "../common/compression/index.ts";
 import { ClientBatchMessage } from "../common/messages/client.ts";
 import { ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
-import { RequestConstants } from "../common/constants.ts";
+
 import { EnchantedClient } from "../client/client.ts";
 import { EnchantedRequest } from "../common/typings/server.ts";
 
@@ -63,7 +64,7 @@ export class EnchantedServer extends EnchantedClient {
     const decompressed = decompress(message.content);
     this.handle_request(decompressed, message.client_id, message.request_index).then(res => {
       const response = compress(res);
-      if (response.length > RequestConstants.SIZE_LIMIT) {
+      if (response.length > SIZE_LIMIT) {
         send_response(response, message.client_id, message.request_index);
       } else {
         const server_message = new ServerSingleResponseMessage(message.client_id, message.request_index, response);
@@ -116,7 +117,7 @@ export class EnchantedServer extends EnchantedClient {
   private *handle_batch_nonblocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
     for (const request of message.requests) {
       yield void this.handle_request(request.body, message.client_id, request.id).then(response => {
-        if (response.length + server_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        if (response.length + server_message.len() > APPROXIMATED_UNCOMPRESSED_LIMIT) {
           send_batch(server_message);
           server_message.reset();
         }
@@ -132,7 +133,7 @@ export class EnchantedServer extends EnchantedClient {
   public handle_batch_blocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
     for (const request of message.requests) {
       this.handle_request(request.body, message.client_id, request.id).then(response => {
-        if (response.length + server_message.len() > RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        if (response.length + server_message.len() > APPROXIMATED_UNCOMPRESSED_LIMIT) {
           send_batch(server_message);
           server_message.reset();
         }

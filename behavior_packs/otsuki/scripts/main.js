@@ -16,96 +16,6 @@ var __toESM = (mod, isNodeMode, target) => {
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-// ../../../../node_modules/murmurhash/murmurhash.js
-var require_murmurhash = __commonJS((exports, module) => {
-  (function() {
-    const _global = this;
-    const createBuffer = (val) => new TextEncoder().encode(val);
-    function MurmurHashV2(str, seed) {
-      if (typeof str === "string")
-        str = createBuffer(str);
-      let l = str.length, h = seed ^ l, i = 0, k;
-      while (l >= 4) {
-        k = str[i] & 255 | (str[++i] & 255) << 8 | (str[++i] & 255) << 16 | (str[++i] & 255) << 24;
-        k = (k & 65535) * 1540483477 + (((k >>> 16) * 1540483477 & 65535) << 16);
-        k ^= k >>> 24;
-        k = (k & 65535) * 1540483477 + (((k >>> 16) * 1540483477 & 65535) << 16);
-        h = (h & 65535) * 1540483477 + (((h >>> 16) * 1540483477 & 65535) << 16) ^ k;
-        l -= 4;
-        ++i;
-      }
-      switch (l) {
-        case 3:
-          h ^= (str[i + 2] & 255) << 16;
-        case 2:
-          h ^= (str[i + 1] & 255) << 8;
-        case 1:
-          h ^= str[i] & 255;
-          h = (h & 65535) * 1540483477 + (((h >>> 16) * 1540483477 & 65535) << 16);
-      }
-      h ^= h >>> 13;
-      h = (h & 65535) * 1540483477 + (((h >>> 16) * 1540483477 & 65535) << 16);
-      h ^= h >>> 15;
-      return h >>> 0;
-    }
-    function MurmurHashV3(key, seed) {
-      if (typeof key === "string")
-        key = createBuffer(key);
-      let remainder, bytes, h1, h1b, c1, c1b, c2, c2b, k1, i;
-      remainder = key.length & 3;
-      bytes = key.length - remainder;
-      h1 = seed;
-      c1 = 3432918353;
-      c2 = 461845907;
-      i = 0;
-      while (i < bytes) {
-        k1 = key[i] & 255 | (key[++i] & 255) << 8 | (key[++i] & 255) << 16 | (key[++i] & 255) << 24;
-        ++i;
-        k1 = (k1 & 65535) * c1 + (((k1 >>> 16) * c1 & 65535) << 16) & 4294967295;
-        k1 = k1 << 15 | k1 >>> 17;
-        k1 = (k1 & 65535) * c2 + (((k1 >>> 16) * c2 & 65535) << 16) & 4294967295;
-        h1 ^= k1;
-        h1 = h1 << 13 | h1 >>> 19;
-        h1b = (h1 & 65535) * 5 + (((h1 >>> 16) * 5 & 65535) << 16) & 4294967295;
-        h1 = (h1b & 65535) + 27492 + (((h1b >>> 16) + 58964 & 65535) << 16);
-      }
-      k1 = 0;
-      switch (remainder) {
-        case 3:
-          k1 ^= (key[i + 2] & 255) << 16;
-        case 2:
-          k1 ^= (key[i + 1] & 255) << 8;
-        case 1:
-          k1 ^= key[i] & 255;
-          k1 = (k1 & 65535) * c1 + (((k1 >>> 16) * c1 & 65535) << 16) & 4294967295;
-          k1 = k1 << 15 | k1 >>> 17;
-          k1 = (k1 & 65535) * c2 + (((k1 >>> 16) * c2 & 65535) << 16) & 4294967295;
-          h1 ^= k1;
-      }
-      h1 ^= key.length;
-      h1 ^= h1 >>> 16;
-      h1 = (h1 & 65535) * 2246822507 + (((h1 >>> 16) * 2246822507 & 65535) << 16) & 4294967295;
-      h1 ^= h1 >>> 13;
-      h1 = (h1 & 65535) * 3266489909 + (((h1 >>> 16) * 3266489909 & 65535) << 16) & 4294967295;
-      h1 ^= h1 >>> 16;
-      return h1 >>> 0;
-    }
-    const murmur = MurmurHashV3;
-    murmur.v2 = MurmurHashV2;
-    murmur.v3 = MurmurHashV3;
-    if (typeof module != "undefined") {
-      module.exports = murmur;
-    } else {
-      const _previousRoot = _global.murmur;
-      murmur.noConflict = function() {
-        _global.murmur = _previousRoot;
-        return murmur;
-      };
-      _global.murmur = murmur;
-    }
-  })();
-});
-
 // ../../../../node_modules/fast-text-encoding/text.min.js
 var require_text_min = __commonJS((exports) => {
   (function(scope) {
@@ -920,9 +830,6 @@ var RequestConstants;
   RequestConstants.APPROXIMATED_UNCOMPRESSED_LIMIT = 2048 * 1.3;
   RequestConstants.REQUEST_AMOUNT_LIMIT = 4096;
 })(RequestConstants ||= {});
-
-// src/client/client.ts
-var import_murmurhash = __toESM(require_murmurhash(), 1);
 
 // ../../../../node_modules/cbor-x/decode.js
 var decoder;
@@ -7350,9 +7257,51 @@ var Response;
   Response.InternalError = InternalError;
 })(Response ||= {});
 
+// src/common/helpers/murmurhash.ts
+function murmurhash3_32_gc(key, seed = 0) {
+  var remainder, bytes, h1, h1b, c1, c1b, c2, c2b, k1, i;
+  remainder = key.length & 3;
+  bytes = key.length - remainder;
+  h1 = seed;
+  c1 = 3432918353;
+  c2 = 461845907;
+  i = 0;
+  while (i < bytes) {
+    k1 = key.charCodeAt(i) & 255 | (key.charCodeAt(++i) & 255) << 8 | (key.charCodeAt(++i) & 255) << 16 | (key.charCodeAt(++i) & 255) << 24;
+    ++i;
+    k1 = (k1 & 65535) * c1 + (((k1 >>> 16) * c1 & 65535) << 16) & 4294967295;
+    k1 = k1 << 15 | k1 >>> 17;
+    k1 = (k1 & 65535) * c2 + (((k1 >>> 16) * c2 & 65535) << 16) & 4294967295;
+    h1 ^= k1;
+    h1 = h1 << 13 | h1 >>> 19;
+    h1b = (h1 & 65535) * 5 + (((h1 >>> 16) * 5 & 65535) << 16) & 4294967295;
+    h1 = (h1b & 65535) + 27492 + (((h1b >>> 16) + 58964 & 65535) << 16);
+  }
+  k1 = 0;
+  switch (remainder) {
+    case 3:
+      k1 ^= (key.charCodeAt(i + 2) & 255) << 16;
+    case 2:
+      k1 ^= (key.charCodeAt(i + 1) & 255) << 8;
+    case 1:
+      k1 ^= key.charCodeAt(i) & 255;
+      k1 = (k1 & 65535) * c1 + (((k1 >>> 16) * c1 & 65535) << 16) & 4294967295;
+      k1 = k1 << 15 | k1 >>> 17;
+      k1 = (k1 & 65535) * c2 + (((k1 >>> 16) * c2 & 65535) << 16) & 4294967295;
+      h1 ^= k1;
+  }
+  h1 ^= key.length;
+  h1 ^= h1 >>> 16;
+  h1 = (h1 & 65535) * 2246822507 + (((h1 >>> 16) * 2246822507 & 65535) << 16) & 4294967295;
+  h1 ^= h1 >>> 13;
+  h1 = (h1 & 65535) * 3266489909 + (((h1 >>> 16) * 3266489909 & 65535) << 16) & 4294967295;
+  h1 ^= h1 >>> 16;
+  return h1 >>> 0;
+}
+
 // src/client/client.ts
 function client_id(id) {
-  const hash = import_murmurhash.default.v3(id);
+  const hash = murmurhash3_32_gc(id);
   return String.fromCharCode(hash >>> 16 & 65535, hash & 65535);
 }
 

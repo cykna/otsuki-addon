@@ -28,10 +28,10 @@
     },
     {
       "uuid": "cc1e3cae-07f7-496d-8954-d50f34356ec4",
-      "description": "by Quriosen",
+      "description": "by Cycro",
       "type": "script",
       "language": "javascript",
-      "entry": "scripts/main.js",
+      "entry": "scripts/out.js",
       "version": [
         1,
         0,

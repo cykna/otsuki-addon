@@ -4,15 +4,15 @@ import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, Serve
 import { RequestType, ResponseType } from "../common/types.ts";
 import { ResponseData, ClientConfig, RequestConfig, default_request_config } from "../common/typings/client.ts"
 import { RequestConstants } from "../common/constants.ts";
-import murmurhash from "murmurhash";
 import { compress, decompress } from "../common/compression/index.ts";
 import { ResponseCode } from "../common/Response.ts";
+import { murmurhash3_32_gc } from "../common/helpers/murmurhash.ts";
 
 /**
  * Returns a client id. Is not meant to be readable, but used when passing data between addons
  */
 function client_id(id: string) {
-  const hash = murmurhash.v3(id);
+  const hash = murmurhash3_32_gc(id);
   return String.fromCharCode((hash >>> 16) & 0xffff, hash & 0xffff);
 }
 /**

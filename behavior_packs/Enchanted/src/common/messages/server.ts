@@ -59,7 +59,7 @@ export class ServerBatchedMessage implements SystemMessage {
   }
 
   private response_buffer: string[] = [];
-  private responses: BatchedResponseData[] = [];
+  responses: BatchedResponseData[] = [];
 
   constructor(public client_id: string) { }
 
