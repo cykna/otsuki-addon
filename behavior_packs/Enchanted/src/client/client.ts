@@ -60,7 +60,9 @@ export class EnchantedClient {
       }
     });
   }
-
+  update_idx() {
+    return this.request_idx = ((this.request_idx + 1) & REQUEST_AMOUNT_LIMIT) || 1; //0 can cause errors when sending data
+  }
   /**
    * A handler for when this client receives a single scriptEvent call response.
    */
@@ -133,7 +135,7 @@ export class EnchantedClient {
 
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
-    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+    this.update_idx();
     for (let i = 0, j = compressed.length; i < j;) {
       message.content = compressed.substring(i, i += SIZE_LIMIT);
       yield system.sendScriptEvent(RequestType.PacketData, message.encode());
@@ -151,7 +153,7 @@ export class EnchantedClient {
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
     message.content = compress(content);
     system.sendScriptEvent(RequestType.SingleRequest, message.encode());
-    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+    this.update_idx();
   }
   /**
    * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
@@ -164,7 +166,7 @@ export class EnchantedClient {
 
     this.initialize_request();
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
-    this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+    this.update_idx();
     for (let i = 0, j = compressed.length; i < j;) {
       message.content = compressed.substring(i, i += SIZE_LIMIT);
       system.sendScriptEvent(RequestType.PacketData, message.encode());
@@ -202,7 +204,7 @@ export class EnchantedClient {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
         this.responses.set(this.request_idx, { ok, body: [] });
-        this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+        this.update_idx();
       }).then(e => {
         return {
           data: e,
@@ -215,7 +217,7 @@ export class EnchantedClient {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
         this.responses.set(this.request_idx, { ok, body: [] });
-        this.request_idx = (this.request_idx + 1) % REQUEST_AMOUNT_LIMIT;
+        this.update_idx();
       }).then(e => ({ data: e, was_cached: false }));
     }
   }

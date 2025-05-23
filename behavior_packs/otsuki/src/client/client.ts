@@ -20,7 +20,7 @@ function client_id(id: string) {
  */
 export class EnchantedClient {
   protected batch_message: ClientBatchMessage;
-  protected request_idx = 0;
+  protected request_idx = 1;
   //Awaiting promises. In case the responses
   protected responses: Map<number, ResponseData> = new Map;
 
@@ -28,7 +28,6 @@ export class EnchantedClient {
     this.config.uuid = client_id(config.uuid);
     if (this.config.target) this.config.target = client_id(this.config.target);
     this.batch_message = new ClientBatchMessage(config.uuid, config.target!);
-    this.request_idx = 0;
     system.afterEvents.scriptEventReceive.subscribe(e => {
       switch (e.id) {
         case ResponseType.PacketData: {
@@ -146,6 +145,8 @@ export class EnchantedClient {
   private make_single_request(content: string) {
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target!, this.request_idx);
     message.content = compress(content);
+    console.log('Oh o conteúdo:', content);
+    console.log('Oh o conteúdo comprimido:', message.encode(), this.request_idx);
     system.sendScriptEvent(RequestType.SingleRequest, message.encode());
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
   }

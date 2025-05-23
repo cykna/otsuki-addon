@@ -46,7 +46,7 @@ const swcOptions = {
           },
           "@zetha/constants": {
             SIZE_LIMIT: "2048",
-            REQUEST_AMOUNT_LIMIT: "4096",
+            REQUEST_AMOUNT_LIMIT: "4095", //all 12 bits are 1, so it's used to the same as N % 4096
             APPROXIMATED_UNCOMPRESSED_LIMIT: "2048 * 1.3"
           }
         }

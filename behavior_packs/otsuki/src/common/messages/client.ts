@@ -124,7 +124,8 @@ export class ClientSingleResquestMessage implements SystemMessage {
   constructor(public client_id: string, public server_id: string, public request_index: number) { }
 
   encode(): string {
-    return header(this.client_id, this.server_id, this.request_index) + this.content;
+
+    return `${header(this.client_id, this.server_id, this.request_index)}${this.content}`;
   }
   decode(content: string): void {
     this.client_id = content.slice(0, 2);

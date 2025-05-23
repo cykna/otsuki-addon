@@ -712,7 +712,7 @@ class ClientSingleResquestMessage {
     this.request_index = request_index;
   }
   encode() {
-    return header(this.client_id, this.server_id, this.request_index) + this.content;
+    return `${header(this.client_id, this.server_id, this.request_index)}${this.content}`;
   }
   decode(content) {
     this.client_id = content.slice(0, 2);
@@ -7308,7 +7308,7 @@ function client_id(id) {
 class EnchantedClient {
   config;
   batch_message;
-  request_idx = 0;
+  request_idx = 1;
   responses = new Map;
   constructor(config) {
     this.config = config;
@@ -7316,7 +7316,6 @@ class EnchantedClient {
     if (this.config.target)
       this.config.target = client_id(this.config.target);
     this.batch_message = new ClientBatchMessage(config.uuid, config.target);
-    this.request_idx = 0;
     system.afterEvents.scriptEventReceive.subscribe((e) => {
       switch (e.id) {
         case "enchanted:response_data" /* PacketData */: {
@@ -7410,6 +7409,8 @@ class EnchantedClient {
   make_single_request(content) {
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target, this.request_idx);
     message.content = compress(content);
+    console.log("Oh o conteúdo:", content);
+    console.log("Oh o conteúdo comprimido:", message.encode(), this.request_idx);
     system.sendScriptEvent("enchanted:single_request" /* SingleRequest */, message.encode());
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
   }
