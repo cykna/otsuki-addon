@@ -26,7 +26,7 @@ function client_id(id: string) {
 export class EnchantedClient {
   private cache: Caching | ContinuousCaching;
   protected batch_message: ClientBatchMessage;
-  protected request_idx = 0;
+  protected request_idx = 1;
   //Awaiting promises. In case the responses
   protected responses: Map<number, ResponseData> = new Map;
 

@@ -1,0 +1,55 @@
+A way to make data encrypted that i've thought and i think there are better ways to do so is:
+
+On initialization of map(1 init), client checks if there's a key between it and the server.
+If there's a key, nothing happens.
+If there's no key, it requests one to the server via /create_key
+The server creates the key and saves it relating it to the one who requested.
+The client saves the key given by the server.
+
+On next requests, client sends data encrypted with the key saved and server decrypt with the key saved.
+
+If another one tries to create key, it throw if the key is already sent.
+If delete key is reached, the sender must be the one who created and the key must be the same. In code it would be something like: 
+
+struct Client {
+  key: Option<string>;
+  target: string;
+}
+impl ZethaClient for Client {};
+impl AsyncOnInitialize for Client {
+  async fn initialize(&self) {
+    let key = self.request(Request<()> {
+      route: "/create_key"
+    }).await;
+    if let Ok(key) = key {
+        self.key = key;
+    }else {
+      println!("Someone already requested a key with my id");
+    }
+  }
+}
+
+struct Server {
+    uuid: string;
+    keys: HashMap<string, string>;
+    keyed_clients: Set<string>;
+}
+
+impl ZethaServer for Server {
+  async create_key_request(&self, client: string) {
+    if(self.keys.has(client) return Err("Already gave a key for this client"); 
+    self.keyed_clients.set(client);
+    let key = generateRandomKey();
+    self.keys.set(key, client);
+    key
+  }
+  async pre_request(&self, client:string, body: &[u8]) {
+      if self.keys.has(client) {
+        let key = self.find_key_of(client);
+        let body = decrypt(body, key);
+        self.handle_request(body, client);
+      }else {
+          Err("Client has no key");
+        }
+    }
+}

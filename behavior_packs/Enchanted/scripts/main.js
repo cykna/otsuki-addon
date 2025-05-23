@@ -11,11 +11,7 @@ import { Response } from "./common/Response";
 system.run(()=>world.setDynamicProperty('suamae', 'é muito legal cara, amo ela'));
 class MainController extends RouteServerController {
     f(body, params) {
-        const keys = new Set();
-        for(const i in globalThis)keys.add(i);
-        for (const i of Reflect.ownKeys(globalThis))keys.add(i);
-        for (const key of keys)console.log(key);
-        return Response.NotEnoughPermission({
+        return Response.Success({
             value: world.getDynamicProperty('suamae'),
             prop: 'suamae'
         });

@@ -11,9 +11,12 @@ import { ServerSingleResponseMessage } from "../common/messages/server.js";
 import { RequestType } from "../common/types.js";
 import { ResponseType } from "../common/types.js";
 import { default_request_config } from "../common/typings/client.js";
+import { CachingOption } from "../common/typings/client.js";
 import { compress } from "../common/compression/index.js";
 import { decompress } from "../common/compression/index.js";
 import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
+import { Caching } from "./cache.js";
+import { ContinuousCaching } from "./cache.js";
 /**
  * Returns a client id. Is not meant to be readable, but used when passing data between addons
  */ function client_id(id) {
@@ -27,6 +30,8 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
         this.config = config;
         this.request_idx = 0;
         this.responses = new Map;
+        if (config.caching == CachingOption.Normal) this.cache = new Caching;
+        else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
         this.config = config;
         this.config.uuid = client_id(this.config.uuid);
         this.batch_message = new ClientBatchMessage(config.uuid, config.target);
@@ -130,6 +135,7 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
    * A single request is a request that needs only 1 scriptEvent call. It's better for requests that the body size is known to be <2kb.
    * So there's no need to initialize on server, stream and finalize, which would cost at least 3 scripEvent call
    */ make_single_request(content) {
+        console.log(this.request_idx);
         const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target, this.request_idx);
         message.content = compress(content);
         system.sendScriptEvent(RequestType.SingleRequest, message.encode());
@@ -164,7 +170,14 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
         const compressed = compress(encoded);
         system.sendScriptEvent(RequestType.BatchRequest, compressed);
     }
-    make_batch_request(data) {
+    async make_batch_request(data) {
+        {
+            let cached = this.cache.get(data);
+            if (cached) return new Promise((ok, _)=>ok({
+                    data: cached,
+                    was_cached: true
+                }));
+        }
         if (this.batch_message.len() + data.length + 1 < 2662.4) {
             this.batch_message.add_request(data, this.request_idx);
             return new Promise((ok, _)=>{
@@ -173,6 +186,11 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
                     body: []
                 });
                 this.request_idx = (this.request_idx + 1) % 4096;
+            }).then((e)=>{
+                return {
+                    data: e,
+                    was_cached: false
+                };
             });
         } else {
             this.batch_request();
@@ -184,7 +202,10 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
                     body: []
                 });
                 this.request_idx = (this.request_idx + 1) % 4096;
-            });
+            }).then((e)=>({
+                    data: e,
+                    was_cached: false
+                }));
         }
     }
     /**
@@ -192,7 +213,14 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
   * */ send_raw(data, config) {
         if (!this.config.target) return new Promise((_, err)=>err(new Error("Client does not have a target")));
         if (config.batch) return this.make_batch_request(data);
-        return new Promise((ok, _)=>{
+        {
+            let cached = this.cache.get(data);
+            if (cached) return new Promise((ok, _)=>ok({
+                    data: cached,
+                    was_cached: true
+                }));
+        }
+        const out = new Promise((ok, _)=>{
             this.responses.set(this.request_idx, {
                 ok,
                 body: []
@@ -202,11 +230,21 @@ import { murmurhash3_32_gc } from "../common/helpers/murmurhash.js";
                 else this.make_request_nonblocking(data);
             } else this.make_single_request(data);
         });
+        if (config.cache) out.then((e)=>{
+            this.cache.insert(data, e, config.cache);
+            return {
+                data: e,
+                was_cached: false
+            };
+        });
+        return out;
     }
     /**
    * Converts the given object and sends it to the server. The server must implement that object request type
    */ async send_object(obj, config = default_request_config()) {
-        return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
+        const data = await this.send_raw(JSON.stringify(obj), config);
+        if (data.was_cached) return data.data;
+        else return JSON.parse(data.data);
     }
     /**
   * Handler of responses when some arrives. By default does not do anything, so it's meant to be overrided

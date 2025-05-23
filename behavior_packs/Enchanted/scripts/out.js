@@ -7071,10 +7071,17 @@ function decompress(data) {
     return decode(pako.inflate(new Uint8Array(out)));
 }
 
+var CachingOption =  function(CachingOption) {
+    CachingOption[CachingOption["None"] = 0] = "None";
+    CachingOption[CachingOption["Normal"] = 1] = "Normal";
+    CachingOption[CachingOption["Continuous"] = 2] = "Continuous";
+    return CachingOption;
+}({});
 function default_request_config() {
     return {
         batch: false,
-        blocks: false
+        blocks: false,
+        cache: 0
     };
 }
 
@@ -7119,6 +7126,68 @@ function murmurhash3_32_gc(key, seed = 0) {
     return h1 >>> 0;
 }
 
+class Caching {
+ constructor(){
+        this.inner = new Map;
+    }
+    has(data) {
+        const inner_data = this.inner.get(murmurhash3_32_gc(data));
+        return (inner_data?.valid_time ?? 0) > system.currentTick;
+    }
+    get(data) {
+        const key = murmurhash3_32_gc(data);
+        const inner_data = this.inner.get(key);
+        if ((inner_data?.valid_time ?? 0) > system.currentTick) return inner_data.data;
+        if (inner_data) this.inner.delete(key);
+    }
+    clear() {
+        this.inner.clear();
+    }
+    insert(key, value, duration = 20) {
+        return this.inner.set(murmurhash3_32_gc(key), {
+            data: value,
+            valid_time: system.currentTick + duration
+        });
+    }
+    delete(key) {
+        return this.inner.delete(murmurhash3_32_gc(key));
+    }
+}
+ function murmur_str(hash) {
+    return 'zethac:' + String.fromCharCode(hash >>> 16, hash & 0xffff);
+}
+class ContinuousCaching {
+ constructor(){}
+    has(data) {
+        const inner = world.getDynamicProperty(murmur_str(murmurhash3_32_gc(data)));
+        if (typeof inner == 'string') {
+            const obj = JSON.parse(inner);
+            return (obj?.valid_time ?? 0) > system.currentTick;
+        }
+    }
+    get(data) {
+        const key = murmur_str(murmurhash3_32_gc(data));
+        const inner = world.getDynamicProperty(key);
+        if (typeof inner == 'string') {
+            const obj = JSON.parse(inner);
+            if ((obj?.valid_time ?? 0) > system.currentTick) return obj.data;
+            else world.setDynamicProperty(key);
+        }
+    }
+    clear() {
+        for (const prop of world.getDynamicPropertyIds())if (prop.startsWith('zethac')) world.setDynamicProperty(prop);
+    }
+    delete(key) {
+        world.setDynamicProperty(murmur_str(murmurhash3_32_gc(key)));
+    }
+    insert(key, data, duration = 20) {
+        world.setDynamicProperty(murmur_str(murmurhash3_32_gc(key)), JSON.stringify({
+            data,
+            valid_time: duration + system.currentTick
+        }));
+    }
+}
+
 function client_id(id) {
     const hash = murmurhash3_32_gc(id);
     return String.fromCharCode(hash >>> 16 & 0xffff, hash & 0xffff);
@@ -7128,6 +7197,8 @@ function client_id(id) {
         this.config = config;
         this.request_idx = 0;
         this.responses = new Map;
+        if (config.caching == CachingOption.Normal) this.cache = new Caching;
+        else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
         this.config = config;
         this.config.uuid = client_id(this.config.uuid);
         this.batch_message = new ClientBatchMessage(config.uuid, config.target);
@@ -7215,6 +7286,7 @@ function client_id(id) {
         this.finalize_request(id);
     }
  make_single_request(content) {
+        console.log(this.request_idx);
         const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target, this.request_idx);
         message.content = compress(content);
         system.sendScriptEvent(RequestType.SingleRequest, message.encode());
@@ -7241,7 +7313,14 @@ function client_id(id) {
         const compressed = compress(encoded);
         system.sendScriptEvent(RequestType.BatchRequest, compressed);
     }
-    make_batch_request(data) {
+    async make_batch_request(data) {
+        {
+            let cached = this.cache.get(data);
+            if (cached) return new Promise((ok, _)=>ok({
+                    data: cached,
+                    was_cached: true
+                }));
+        }
         if (this.batch_message.len() + data.length + 1 < 2662.4) {
             this.batch_message.add_request(data, this.request_idx);
             return new Promise((ok, _)=>{
@@ -7250,6 +7329,11 @@ function client_id(id) {
                     body: []
                 });
                 this.request_idx = (this.request_idx + 1) % 4096;
+            }).then((e)=>{
+                return {
+                    data: e,
+                    was_cached: false
+                };
             });
         } else {
             this.batch_request();
@@ -7261,13 +7345,23 @@ function client_id(id) {
                     body: []
                 });
                 this.request_idx = (this.request_idx + 1) % 4096;
-            });
+            }).then((e)=>({
+                    data: e,
+                    was_cached: false
+                }));
         }
     }
  send_raw(data, config) {
         if (!this.config.target) return new Promise((_, err)=>err(new Error("Client does not have a target")));
         if (config.batch) return this.make_batch_request(data);
-        return new Promise((ok, _)=>{
+        {
+            let cached = this.cache.get(data);
+            if (cached) return new Promise((ok, _)=>ok({
+                    data: cached,
+                    was_cached: true
+                }));
+        }
+        const out = new Promise((ok, _)=>{
             this.responses.set(this.request_idx, {
                 ok,
                 body: []
@@ -7277,9 +7371,19 @@ function client_id(id) {
                 else this.make_request_nonblocking(data);
             } else this.make_single_request(data);
         });
+        if (config.cache) out.then((e)=>{
+            this.cache.insert(data, e, config.cache);
+            return {
+                data: e,
+                was_cached: false
+            };
+        });
+        return out;
     }
  async send_object(obj, config = default_request_config()) {
-        return JSON.parse(await this.send_raw(JSON.stringify(obj), config));
+        const data = await this.send_raw(JSON.stringify(obj), config);
+        if (data.was_cached) return data.data;
+        else return JSON.parse(data.data);
     }
  handle_response(content, id) {}
 }
@@ -7314,6 +7418,7 @@ system.afterEvents.scriptEventReceive.subscribe((e)=>{
             }
         case RequestType.SingleRequest:
             {
+                console.log(e.message, e.message.length);
                 const message = ClientSingleResquestMessage.from(e.message);
                 EnchantedServer.running_server.receive_client_single(message);
             }
@@ -7472,11 +7577,7 @@ function _ts_decorate(decorators, target, key, desc) {
 system.run(()=>world.setDynamicProperty('suamae', 'é muito legal cara, amo ela'));
 class MainController extends RouteServerController {
     f(body, params) {
-        const keys = new Set();
-        for(const i in globalThis)keys.add(i);
-        for (const i of Reflect.ownKeys(globalThis))keys.add(i);
-        for (const key of keys)console.log(key);
-        return Response.NotEnoughPermission({
+        return Response.Success({
             value: world.getDynamicProperty('suamae'),
             prop: 'suamae'
         });
