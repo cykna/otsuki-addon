@@ -5,28 +5,33 @@ function _ts_decorate(decorators, target, key, desc) {
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 }
 import { system, world } from "@minecraft/server";
-import { RouteServer, RouteServerController } from "./server/routed_server";
-import { Route } from "./server/decorators";
-import { Response } from "./common/Response";
+import { QueuedRouteServer } from "./server/routed/queued.js";
+import { CachingOption } from "./common/typings/client";
+import { RouteServerController } from "./server/routed/controller";
+import { Route } from "./server/routed/decorators/route";
+import { Response } from "./common/Response.js";
 system.run(()=>world.setDynamicProperty('suamae', 'é muito legal cara, amo ela'));
-class MainController extends RouteServerController {
-    f(body, params) {
-        return Response.Success({
-            value: world.getDynamicProperty('suamae'),
-            prop: 'suamae'
-        });
-    }
-    constructor(...args){
-        super(...args), this.id = 0;
+export class Controller extends RouteServerController {
+    async awaited(body, params, client, id) {
+        console.log("Server received param: ", params.id);
+        console.log("Imma wait 2 seconds, idc");
+        await system.waitTicks(40);
+        return Response.Success("Yeah, you've got it");
     }
 }
 _ts_decorate([
-    Route("/example/:id")
-], MainController.prototype, "f", null);
-const server = new RouteServer({
-    uuid: "cycro:zetha_server"
-});
-server.use_controller(MainController);
-server.configure({
-    accepted_clients: '*'
-});
+    Route("/suamae/:id")
+], Controller.prototype, "awaited", null);
+function main() {
+    const server = new QueuedRouteServer({
+        uuid: 'cycro:zetha_server',
+        block_request: false,
+        caching: CachingOption.Normal
+    });
+    server.use_controller(Controller);
+    server.configure({
+        accepted_clients: '*'
+    });
+    server.listen();
+}
+main();

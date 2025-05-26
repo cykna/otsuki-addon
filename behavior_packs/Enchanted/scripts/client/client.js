@@ -26,10 +26,15 @@ import { ContinuousCaching } from "./cache.js";
 /**
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */ export class EnchantedClient {
+    static{
+        this.running_client = null;
+    }
     constructor(config){
         this.config = config;
-        this.request_idx = 0;
+        this.request_idx = 1;
         this.responses = new Map;
+        if (EnchantedClient.running_client) throw new Error("An addon cannot have more than a single Client!");
+        else EnchantedClient.running_client = this;
         if (config.caching == CachingOption.Normal) this.cache = new Caching;
         else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
         this.config = config;
@@ -39,46 +44,52 @@ import { ContinuousCaching } from "./cache.js";
             switch(e.id){
                 case ResponseType.PacketData:
                     {
-                        const server_message = ServerPacketMessage.from(e.message);
-                        this.receive_packet(server_message);
+                        const message = ServerPacketMessage.from(e.message);
+                        if (message.target != this.config.uuid) break;
+                        this.receive_server_packet(message);
                         break;
                     }
                 case ResponseType.Finalization:
                     {
                         const message = ServerFinalizeMessage.from(e.message);
-                        this.receive_finalization(message);
+                        if (message.target != this.config.uuid) break;
+                        this.receive_server_finalization(message);
                         break;
                     }
                 case ResponseType.BatchResponse:
                     {
                         const decompressed = decompress(e.message);
                         const message = ServerBatchedMessage.from(decompressed);
-                        this.receive_batch(message);
+                        if (message.client_id != this.config.uuid) break;
+                        this.receive_server_batch(message);
                     }
                 case ResponseType.SingleResponse:
                     {
                         const message = ServerSingleResponseMessage.from(e.message);
-                        this.receive_single(message);
+                        if (message.client_id != this.config.uuid) break;
+                        this.receive_server_single(message);
                     }
             }
         });
     }
     /**
+   * Updates the request index after making a request. Circulates between 1 and 4096
+   */ update_idx() {
+        return this.request_idx = this.request_idx + 1 & 4095 || 1; //0 can cause errors when sending data
+    }
+    /**
    * A handler for when this client receives a single scriptEvent call response.
-   */ receive_single(message) {
-        if (message.client_id != this.config.uuid) return false;
+   */ receive_server_single(message) {
         const res = this.responses.get(message.request_index);
         if (!res) return false;
         const body = decompress(message.content);
         res.ok(body);
         this.responses.delete(message.request_index);
         this.handle_response(body, message.request_index);
-        return true;
     }
     /**
    * A handler for when this client receives a batched response
-   */ receive_batch(message) {
-        if (message.client_id != this.config.uuid) return false;
+   */ receive_server_batch(message) {
         for (const response of message.responses){
             const res = this.responses.get(response.id);
             if (!res) continue;
@@ -86,14 +97,11 @@ import { ContinuousCaching } from "./cache.js";
             this.responses.delete(response.id);
             this.handle_response(response.body, response.id);
         }
-        return true;
     }
     /**
    * A handler for when this client receives some packet from the server. If overrided, recommended to still execute the default one.
-   */ receive_packet(message) {
-        if (message.target != this.config.uuid) return false;
+   */ receive_server_packet(message) {
         this.responses.get(message.response_index).body.push(message.content);
-        return true;
     }
     handle_indexed_response(index) {
         const res = this.responses.get(index);
@@ -105,10 +113,8 @@ import { ContinuousCaching } from "./cache.js";
     }
     /**
    * A handler for when this clients receives a request finalization message. This is executed before the promise resolving of the request and the handle_response /**
-    */ receive_finalization(message) {
-        if (message.target != this.config.uuid) return false;
+    */ receive_server_finalization(message) {
         this.handle_indexed_response(message.response_index);
-        return true;
     }
     /**
    * Sends a message to the server saying this client is going to emit a request.
@@ -124,7 +130,7 @@ import { ContinuousCaching } from "./cache.js";
         const id = this.request_idx;
         this.initialize_request();
         const message = new ClientPacketMessage(this.config.target, this.config.uuid, '', this.request_idx);
-        this.request_idx = (this.request_idx + 1) % 4096;
+        this.update_idx();
         for(let i = 0, j = compressed.length; i < j;){
             message.content = compressed.substring(i, i += 2048);
             yield system.sendScriptEvent(RequestType.PacketData, message.encode());
@@ -139,7 +145,7 @@ import { ContinuousCaching } from "./cache.js";
         const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target, this.request_idx);
         message.content = compress(content);
         system.sendScriptEvent(RequestType.SingleRequest, message.encode());
-        this.request_idx = (this.request_idx + 1) % 4096;
+        this.update_idx();
     }
     /**
    * Sends the given content to the server with the uuid that matches this client config target. It streams the data across multiple scriptEvents if the content compressed is >2048chars, but sends them all in the current tick
@@ -149,7 +155,7 @@ import { ContinuousCaching } from "./cache.js";
         const id = this.request_idx;
         this.initialize_request();
         const message = new ClientPacketMessage(this.config.target, this.config.uuid, '', this.request_idx);
-        this.request_idx = (this.request_idx + 1) % 4096;
+        this.update_idx();
         for(let i = 0, j = compressed.length; i < j;){
             message.content = compressed.substring(i, i += 2048);
             system.sendScriptEvent(RequestType.PacketData, message.encode());
@@ -185,7 +191,7 @@ import { ContinuousCaching } from "./cache.js";
                     ok,
                     body: []
                 });
-                this.request_idx = (this.request_idx + 1) % 4096;
+                this.update_idx();
             }).then((e)=>{
                 return {
                     data: e,
@@ -201,7 +207,7 @@ import { ContinuousCaching } from "./cache.js";
                     ok,
                     body: []
                 });
-                this.request_idx = (this.request_idx + 1) % 4096;
+                this.update_idx();
             }).then((e)=>({
                     data: e,
                     was_cached: false

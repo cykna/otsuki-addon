@@ -7409,8 +7409,6 @@ class EnchantedClient {
   make_single_request(content) {
     const message = new ClientSingleResquestMessage(this.config.uuid, this.config.target, this.request_idx);
     message.content = compress(content);
-    console.log("Oh o conteúdo:", content);
-    console.log("Oh o conteúdo comprimido:", message.encode(), this.request_idx);
     system.sendScriptEvent("enchanted:single_request" /* SingleRequest */, message.encode());
     this.request_idx = (this.request_idx + 1) % RequestConstants.REQUEST_AMOUNT_LIMIT;
   }

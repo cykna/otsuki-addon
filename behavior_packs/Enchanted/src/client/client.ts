@@ -24,6 +24,9 @@ function client_id(id: string) {
  * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
  */
 export class EnchantedClient {
+
+  static running_client: EnchantedClient | null = null;
+
   private cache: Caching | ContinuousCaching;
   protected batch_message: ClientBatchMessage;
   protected request_idx = 1;
@@ -31,57 +34,68 @@ export class EnchantedClient {
   protected responses: Map<number, ResponseData> = new Map;
 
   constructor(protected readonly config: ClientConfig) {
-    if (config.caching == CachingOption.Normal) this.cache = new Caching;
-    else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
+    {
+      if (EnchantedClient.running_client) throw new Error("An addon cannot have more than a single Client!")
+      else EnchantedClient.running_client = this;
+    }
+    {
+      if (config.caching == CachingOption.Normal) this.cache = new Caching;
+      else if (config.caching == CachingOption.Continuous) this.cache = new ContinuousCaching;
+    }
     this.config = config;
     this.config.uuid = client_id(this.config.uuid);
     this.batch_message = new ClientBatchMessage(config.uuid, config.target!);
     system.afterEvents.scriptEventReceive.subscribe(e => {
       switch (e.id) {
         case ResponseType.PacketData: {
-          const server_message = ServerPacketMessage.from(e.message);
-          this.receive_packet(server_message);
+          const message = ServerPacketMessage.from(e.message);
+          if (message.target != this.config.uuid) break;
+          this.receive_server_packet(message);
           break;
         }
         case ResponseType.Finalization: {
           const message = ServerFinalizeMessage.from(e.message);
-          this.receive_finalization(message);
+          if (message.target != this.config.uuid) break;
+          this.receive_server_finalization(message);
           break;
         }
         case ResponseType.BatchResponse: {
           const decompressed = decompress(e.message);
+
           const message = ServerBatchedMessage.from(decompressed);
-          this.receive_batch(message);
+          if (message.client_id != this.config.uuid) break;
+          this.receive_server_batch(message);
         }
         case ResponseType.SingleResponse: {
           const message = ServerSingleResponseMessage.from(e.message);
-          this.receive_single(message);
+          if (message.client_id != this.config.uuid) break;
+          this.receive_server_single(message);
         }
       }
     });
   }
-  update_idx() {
+  /**
+   * Updates the request index after making a request. Circulates between 1 and 4096
+   */
+  private update_idx() {
     return this.request_idx = ((this.request_idx + 1) & REQUEST_AMOUNT_LIMIT) || 1; //0 can cause errors when sending data
   }
   /**
    * A handler for when this client receives a single scriptEvent call response.
    */
-  protected receive_single(message: ServerSingleResponseMessage) {
-    if (message.client_id != this.config.uuid) return false;
+  protected receive_server_single(message: ServerSingleResponseMessage) {
     const res = this.responses.get(message.request_index);
     if (!res) return false;
     const body = decompress(message.content);
     res.ok(body);
     this.responses.delete(message.request_index);
     this.handle_response(body, message.request_index);
-    return true;
   }
 
   /**
    * A handler for when this client receives a batched response
    */
-  protected receive_batch(message: ServerBatchedMessage) {
-    if (message.client_id != this.config.uuid) return false;
+  protected receive_server_batch(message: ServerBatchedMessage) {
     for (const response of message.responses) {
       const res = this.responses.get(response.id);
       if (!res) continue;
@@ -89,15 +103,12 @@ export class EnchantedClient {
       this.responses.delete(response.id);
       this.handle_response(response.body, response.id);
     }
-    return true;
   }
   /**
    * A handler for when this client receives some packet from the server. If overrided, recommended to still execute the default one.
    */
-  protected receive_packet(message: ServerPacketMessage): boolean {
-    if (message.target != this.config.uuid) return false;
+  protected receive_server_packet(message: ServerPacketMessage) {
     this.responses.get(message.response_index)!.body.push(message.content);
-    return true;
   }
 
   protected handle_indexed_response(index: number) {
@@ -111,16 +122,14 @@ export class EnchantedClient {
   /**
    * A handler for when this clients receives a request finalization message. This is executed before the promise resolving of the request and the handle_response /**
     */
-  protected receive_finalization(message: ServerFinalizeMessage) {
-    if (message.target != this.config.uuid) return false;
+  protected receive_server_finalization(message: ServerFinalizeMessage) {
     this.handle_indexed_response(message.response_index);
-    return true;
   }
 
   /**
    * Sends a message to the server saying this client is going to emit a request.
    */
-  protected initialize_request() {
+  private initialize_request() {
     const message = new ClientInitializationMessage(this.config.uuid, this.config.target!, this.request_idx);
     system.sendScriptEvent(RequestType.Initialization, message.encode());
   }

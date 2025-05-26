@@ -113,7 +113,7 @@ swcDir({
           'constBindings': true,
           'objectShorthand': true,
         },
-        file: './scripts/out.js'
+        file: './scripts/main.js'
       });
     },
     onFail: e => {

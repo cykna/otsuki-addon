@@ -31,7 +31,7 @@
       "description": "by Cycro",
       "type": "script",
       "language": "javascript",
-      "entry": "scripts/out.js",
+      "entry": "scripts/main.js",
       "version": [
         1,
         0,

@@ -1,19 +1,22 @@
 import { system, } from "@minecraft/server";
 import { SIZE_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT } from "@zetha/constants";
 import { ClientConfig } from "../common/typings/client.ts";
-import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts"
 import { RequestType } from "../common/types.ts";
-import { send_batch, send_response, send_response_blocking, send_single } from "./internals.ts";
+import { send_batch, send_response, send_response_blocking, send_single } from "../helpers/server/internals.ts";
 import { decompress, compress } from "../common/compression/index.ts";
-import { ClientBatchMessage } from "../common/messages/client.ts";
+import { ClientBatchMessage, ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts";
 import { ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
 
 import { EnchantedClient } from "../client/client.ts";
 import { EnchantedRequest, ReceivedRequest } from "../common/typings/server.ts";
+import { channel, ChannelReceiver, ChannelSender } from "../helpers/mpsc/channel.ts";
 
+export interface ServerConfig extends ClientConfig {
+  block_request: boolean;
+}
 
 system.afterEvents.scriptEventReceive.subscribe(e => {
-  if (!EnchantedClient.running_client || !(EnchantedClient.running_client instanceof EnchantedServer)) return;
+  if (!EnchantedClient.running_client || !(EnchantedClient.running_client instanceof QueuedZethaServer)) return;
 
   const client = EnchantedClient.running_client;
   let message: any;
@@ -55,79 +58,38 @@ system.afterEvents.scriptEventReceive.subscribe(e => {
 });
 
 
-export interface ServerConfig extends ClientConfig {
-  block_request: boolean;
-}
+
 //a server can be a client as well
-export class EnchantedServer extends EnchantedClient {
+export class QueuedZethaServer extends EnchantedClient {
 
   static requests: Map<string, Map<number, EnchantedRequest>> = new Map;
   config: ServerConfig;
+  /**
+   * The channel writer to send data about the received request.
+   */
+  tx: ChannelSender<ReceivedRequest>;
+  /**
+   * The channel reader to receive data about the received request.
+   */
+  rx: ChannelReceiver<ReceivedRequest>;
   constructor(config: ServerConfig) {
     super(config);
-  }
-  send_request(req: ReceivedRequest) {
-    switch (req.type) {
-      case RequestType.SingleRequest: {
-        this.receive_client_single(req);
-        break;
-      }
-      case RequestType.Initialization: {
-        this.receive_initialization(req);
-        break;
-      }
-      case RequestType.PacketData: {
-        this.receive_client_packet(req);
-        break;
-      }
-      case RequestType.BatchRequest: {
-        break;
-      }
-      case RequestType.Finalization: {
-        this.receive_client_finalization(req);
-      }
-    }
+    const [tx, rx] = channel<ReceivedRequest>();
+    this.tx = tx;
+    this.rx = rx;
   }
 
-  /**
-   * A method for when this server receives a single request
-   */
-  public receive_client_single(req: ReceivedRequest) {
-    const decompressed = decompress(req.body);
-    this.handle_request(decompressed, req.client_id, req.request_index).then(res => {
-      const response = compress(res);
-      if (response.length > SIZE_LIMIT) {
-        send_response(response, req.client_id, req.request_index);
-      } else {
-        const server_message = new ServerSingleResponseMessage(req.client_id, req.request_index, response);
-        send_single(server_message);
-      }
-    });
-    return true;
+  async *[Symbol.asyncIterator]() {
+    yield* this.rx;
   }
   /**
-   * Server handler when asked to prepare a request with the given informations. This is not mean't to return something, but only prepare for handling packets.
-   * @param req The message with client and request information
+   * Queues the given request on this server. Awaits for all the others before the given to be resolved, then, it starts to run. If you want something where the order does not matter,
+   * and without the need to await, use ZethaServer instead.
    */
-  public receive_initialization(req: ReceivedRequest) {
-    if (this.config.uuid != req.server_id) return false;
-    const request = EnchantedServer.requests.get(req.client_id);
-    if (request) request.set(req.request_index, { content: [] })
-    else EnchantedServer.requests.set(req.client_id, new Map([[req.request_index, { content: [] }]]));
-    return true;
+  public send_request(req: ReceivedRequest) {
+    this.tx.send(req);
   }
 
-  /**
-   * A server handler for when receiving a packet request. (maybe)Is not the total request body, but instead, a streammed part of it.
-   * @param req The client message with the informations about the packet
-   * @obs The content of the message is compressed
-   */
-  public receive_client_packet(req: ReceivedRequest) {
-    const request = EnchantedServer.requests.get(req.client_id)?.get(req.request_index);
-    if (!request) throw new Error(`Not recognized client with id: ${req.client_id} with id ${req.request_index}`);
-    request.content.push(req.body);
-    return true;
-  }
 
   /**
    * A server handler for when receiving a batch request. If this is received, it handles all the requests and sends back to the client immediatly.
@@ -136,7 +98,7 @@ export class EnchantedServer extends EnchantedClient {
   public receive_client_batch(message: ClientBatchMessage) {
     const server_message = new ServerBatchedMessage(message.client_id);
     if (this.config.block_request) this.handle_batch_blocking(message, server_message);
-    else system.runJob(this.handle_batch_nonblocking(message, server_message));
+    else system.runJob(this.handle_batch_nonblocking(message, server_message))
   }
 
   /**
@@ -171,30 +133,75 @@ export class EnchantedServer extends EnchantedClient {
     }
   }
 
-  /**
-   * A server handler for when an usual request is finalized and the server is asked to give it a response.
-   * @param req The message sent by the client with information about the request.
-   */
-  public receive_client_finalization(req: ReceivedRequest) {
-    const request = EnchantedServer.requests.get(req.client_id);
-    if (!request) throw new Error(`Not recognized client: ${req.client_id}`);
-
-    const content = decompress(request.get(req.request_index)!.content.join(''));
-
-    this.handle_request(content, req.client_id, req.request_index).then(response => {
-      if (this.config.block_request) send_response(compress(response), req.client_id, req.request_index);
-      else send_response_blocking(compress(response), req.client_id, req.request_index);
-      request.delete(req.request_index);
-    });
-  }
-
   async handle_request(req: string, client: string, req_id: number) {
     const data = this.handle(JSON.parse(req), client, req_id);
-    return JSON.stringify(data);
+    return data.then(JSON.stringify);
   }
 
   async handle(obj: any, client: string, req_id: number): Promise<any> {
     return "Todo! Enchanted Server default handle function is meant to be overwritten"
   }
 
+  protected handle_initialization(req: ReceivedRequest) {
+    const request = QueuedZethaServer.requests.get(req.client_id);
+    if (request) request.set(req.request_index, { content: [] })
+    else QueuedZethaServer.requests.set(req.client_id, new Map([[req.request_index, { content: [] }]]));
+  }
+
+  protected async handle_finalization(req: ReceivedRequest) {
+    const request = QueuedZethaServer.requests.get(req.client_id);
+    if (!request) throw new Error(`Not recognized client: ${req.client_id}`);
+
+    const data = compress(await this.handle_request(decompress(request.get(req.request_index)!.content.join('')), req.client_id, req.request_index));
+
+    if (this.config.block_request) send_response_blocking(data, req.client_id, req.request_index);
+    else send_response(data, req.client_id, req.request_index);
+
+    request.delete(req.request_index);
+
+  }
+
+  protected async handle_single_req(req: ReceivedRequest) {
+    const response = compress(await this.handle_request(req.body, req.client_id, req.request_index));
+    if (response.length > SIZE_LIMIT) send_response(response, req.client_id, req.request_index);
+    else send_single(new ServerSingleResponseMessage(req.client_id, req.request_index, response));
+  }
+
+  protected handle_packet(req: ReceivedRequest) {
+    const request = QueuedZethaServer.requests.get(req.client_id)?.get(req.request_index);
+    if (!request) throw new Error(`Not recognized client with id: ${req.client_id} with id ${req.request_index}`);
+    request.content.push(req.body);
+  }
+
+  /**
+  * Initializes the server and starts receiving requests. If some request is given before this, the data is simply lost.
+  */
+  async listen() {
+    console.log("imma try to listen");
+    for await (const req of this.rx) {
+      console.log(req.type);
+      switch (req.type) {
+        case RequestType.SingleRequest: {
+          await this.handle_single_req(req);
+          break;
+        }
+        case RequestType.Initialization: {
+          this.handle_initialization(req);
+          break;
+        }
+        case RequestType.Finalization: {
+          await this.handle_finalization(req);
+          break;
+        }
+        case RequestType.PacketData: {
+          this.handle_packet(req);
+          break;
+        }
+
+        case RequestType.BatchRequest: {
+          throw new Error("A Batch request should not be avaible in this method.");
+        }
+      }
+    }
+  }
 }
