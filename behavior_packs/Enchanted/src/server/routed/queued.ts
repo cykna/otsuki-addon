@@ -1,7 +1,8 @@
 import Memoirist from "memoirist";
-import { Response, ResponseJson } from "../../common/Response";
-import { EnchantedServer, ServerConfig } from "../server.ts";
-import { RoutingFunc, Throwable } from "../../common/types";
+import { Response, ResponseJson, RoutingFunc, ServerConfig, Throwable } from "../../common/index.ts";
+
+
+
 import { get_route } from "./decorators/route.ts";
 import { RouteServerController } from "./controller.ts";
 import { get_guard } from "./decorators/guarded.ts";
@@ -17,10 +18,6 @@ export interface RoutedRequest<T> {
 
 export interface ServerConfiguration {
   accepted_clients: string[] | '*'
-}
-
-export interface ErrorHandlerInterface {
-  handle(e: Error): ResponseJson;
 }
 
 export class QueuedRouteServer extends QueuedZethaServer {
@@ -46,7 +43,7 @@ export class QueuedRouteServer extends QueuedZethaServer {
   }
 
   async handle<T>(obj: RoutedRequest<T>, target: string, id: number): Throwable<Promise<Throwable<ResponseJson>>> {
-    console.log("Tentando achar a rota", obj.route);
+
     const handler = this.inner.find('GET', obj.route);
     if (handler == null) return Response.NotFound(`Route '${obj.route}' was not found!`);
     {
@@ -83,7 +80,8 @@ export class QueuedRouteServer extends QueuedZethaServer {
       case controller_route == null: {
         for (const key of Reflect.ownKeys(controller.prototype)) {
           const route = get_route(controller_instance[key as keyof typeof controller_instance] as any);
-          if (route) this.route_f(route, controller[key].bind(controller_instance), error_handler);
+
+          if (route) this.route_f(route, controller_instance[key].bind(controller_instance), error_handler);
         }
         return;
       }

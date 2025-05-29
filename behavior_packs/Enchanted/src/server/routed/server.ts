@@ -1,15 +1,11 @@
-//imma call it mdtp -> minecraft data transfer protocol
-
 import Memoirist from "memoirist";
-import { Response, ResponseJson } from "../../common/Response";
-import { EnchantedServer, ServerConfig } from "../server.ts";
-import { RoutingFunc, Throwable } from "../../common/types";
 import { get_route } from "./decorators/route.ts";
 import { RouteServerController } from "./controller.ts";
 import { get_guard } from "./decorators/guarded.ts";
 import { get_err_handler } from "./decorators/error_handler.ts";
 import { ErrorHandler } from "./error_handler.ts";
-
+import { client_id, Response, ResponseJson, RoutingFunc, ServerConfig, Throwable, } from "../../common/index.ts";
+import { ZethaServer } from "../server.ts";
 
 export interface RoutedRequest<T> {
   route: string;
@@ -20,11 +16,7 @@ export interface ServerConfiguration {
   accepted_clients: string[] | '*'
 }
 
-export interface ErrorHandlerInterface {
-  handle(e: Error): ResponseJson;
-}
-
-export class RouteServer extends EnchantedServer {
+export class RouteServer extends ZethaServer {
 
   protected inner = new Memoirist<RoutingFunc>();
   protected accept_all = false;
@@ -35,10 +27,15 @@ export class RouteServer extends EnchantedServer {
     this.config = config;
   }
 
+  /**
+   * Configures the server with the given configuration.
+   * @param config The configuration that the server will run with.
+   * @param config.accepted_clients If '*' this server receives requests from any clients, if else, expected a string array, containing all the client names, without the usage of client_id
+  */
   configure(config: ServerConfiguration) {
     if (config.accepted_clients == "*") {
       this.accept_all = true;
-    } else config.accepted_clients.forEach(client => this.accepted_clients.add(client));
+    } else config.accepted_clients.forEach(client => this.accepted_clients.add(client_id(client)));
   }
 
   route(route: string, fn: RoutingFunc) {

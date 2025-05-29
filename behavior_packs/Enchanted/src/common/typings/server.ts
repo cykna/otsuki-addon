@@ -1,6 +1,7 @@
-import { RequestType } from "../types";
+import { RequestType } from "../protocol.ts";
+import { ClientConfig } from "./client";
 
-export interface EnchantedRequest {
+export interface ZethaRequest {
   content: string[];
 };
 
@@ -13,4 +14,9 @@ export interface ReceivedRequest {
   body: string;
   type: RequestType;
   request_index: number;
-};
+}
+
+;
+export interface ServerConfig extends ClientConfig {
+  block_request: boolean;
+}

@@ -1,11 +1,7 @@
 import { system, world } from "@minecraft/server";
-import { ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage, ClientBatchMessage, ClientSingleResquestMessage } from "../common/messages/client.ts";
-import { ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts"
-import { RequestType, ResponseType } from "../common/types.ts";
-import { ResponseData, ClientConfig, RequestConfig, default_request_config, CachingOption } from "../common/typings/client.ts"
-import { SIZE_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT, REQUEST_AMOUNT_LIMIT } from "@zetha/constants";
-import { compress, decompress } from "../common/compression/index.ts";
-import { murmurhash3_32_gc } from "../common/helpers/murmurhash.ts";
+
+import { client_id, MessageInfo, compress, decompress, ResponseType, RequestType, ResponseData, ClientConfig, RequestConfig, CachingOption, default_request_config, ServerPacketMessage, ServerFinalizeMessage, ServerBatchedMessage, ServerSingleResponseMessage, ClientSingleResquestMessage, ClientBatchMessage, ClientPacketMessage, ClientInitializationMessage, ClientFinalizationMessage } from "../common/index.ts"
+
 import { Caching, ContinuousCaching } from "./cache.ts";
 
 export interface ClientResponseData {
@@ -14,18 +10,16 @@ export interface ClientResponseData {
 }
 
 /**
- * Returns a client id. Is not meant to be readable, but used when passing data between addons
+ * Creates a new ZethaClient. The uuid is an id(not necessarily an uuid) that is static and not expected to be changed
+ *
+ * @example
+ * const client = new ZethaClient({
+ *  uuid: 'cycro:zetha_client'
+ * });
  */
-function client_id(id: string) {
-  const hash = murmurhash3_32_gc(id);
-  return String.fromCharCode((hash >>> 16) & 0xffff, hash & 0xffff);
-}
-/**
- * Creates a new EnchantedClient. The uuid is an uuid that is static and not expected to be changed. Preferly it's better to use the uuid of the behavior pack itself
- */
-export class EnchantedClient {
+export class ZethaClient {
 
-  static running_client: EnchantedClient | null = null;
+  static running_client: ZethaClient | null = null;
 
   private cache: Caching | ContinuousCaching;
   protected batch_message: ClientBatchMessage;
@@ -35,8 +29,8 @@ export class EnchantedClient {
 
   constructor(protected readonly config: ClientConfig) {
     {
-      if (EnchantedClient.running_client) throw new Error("An addon cannot have more than a single Client!")
-      else EnchantedClient.running_client = this;
+      if (ZethaClient.running_client) throw new Error("An addon cannot have more than a single Client!")
+      else ZethaClient.running_client = this;
     }
     {
       if (config.caching == CachingOption.Normal) this.cache = new Caching;
@@ -78,7 +72,7 @@ export class EnchantedClient {
    * Updates the request index after making a request. Circulates between 1 and 4096
    */
   private update_idx() {
-    return this.request_idx = ((this.request_idx + 1) & REQUEST_AMOUNT_LIMIT) || 1; //0 can cause errors when sending data
+    return this.request_idx = ((this.request_idx + 1) & MessageInfo.ApproxUncompressedSize) || 1; //0 can cause errors when sending data
   }
   /**
    * A handler for when this client receives a single scriptEvent call response.
@@ -146,7 +140,7 @@ export class EnchantedClient {
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
     this.update_idx();
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += SIZE_LIMIT);
+      message.content = compressed.substring(i, i += MessageInfo.SizeLimit)
       yield system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
@@ -177,7 +171,7 @@ export class EnchantedClient {
     const message = new ClientPacketMessage(this.config.target!, this.config.uuid, '', this.request_idx);
     this.update_idx();
     for (let i = 0, j = compressed.length; i < j;) {
-      message.content = compressed.substring(i, i += SIZE_LIMIT);
+      message.content = compressed.substring(i, i += MessageInfo.SizeLimit);
       system.sendScriptEvent(RequestType.PacketData, message.encode());
     }
     this.finalize_request(id);
@@ -209,7 +203,7 @@ export class EnchantedClient {
         was_cached: true
       }));
     }
-    if (this.batch_message.len() + data.length + 1 < APPROXIMATED_UNCOMPRESSED_LIMIT) {
+    if (this.batch_message.len() + data.length <= MessageInfo.ApproxUncompressedSize) {
       this.batch_message.add_request(data, this.request_idx);
       return new Promise((ok, _) => {
         this.responses.set(this.request_idx, { ok, body: [] });
@@ -232,7 +226,7 @@ export class EnchantedClient {
   }
 
   /**
-  * compress the given data and requests it to Enchanted Server target.
+  * compress the given data and requests it to Zetha server target.
   * */
   send_raw(data: string, config: RequestConfig): Promise<ClientResponseData> {
     if (!this.config.target) return new Promise((_, err) => err(new Error("Client does not have a target")));
@@ -246,7 +240,7 @@ export class EnchantedClient {
     }
     const out = new Promise((ok, _) => {
       this.responses.set(this.request_idx, { ok, body: [] });
-      if (data.length > APPROXIMATED_UNCOMPRESSED_LIMIT) {
+      if (data.length > MessageInfo.ApproxUncompressedSize) {
         if (config.blocks) this.make_request_blocking(data);
         else this.make_request_nonblocking(data);
       }

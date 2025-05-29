@@ -1,67 +1,14 @@
 import { system, } from "@minecraft/server";
-import { SIZE_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT } from "@zetha/constants";
-import { ClientConfig } from "../common/typings/client.ts";
-import { ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage } from "../common/messages/client.ts"
-import { RequestType } from "../common/types.ts";
-import { send_batch, send_response, send_response_blocking, send_single } from "./internals.ts";
-import { decompress, compress } from "../common/compression/index.ts";
-import { ClientBatchMessage } from "../common/messages/client.ts";
-import { ServerBatchedMessage, ServerSingleResponseMessage } from "../common/messages/server.ts";
-
-import { EnchantedClient } from "../client/client.ts";
-import { EnchantedRequest, ReceivedRequest } from "../common/typings/server.ts";
+import { MessageInfo, ZethaRequest, ReceivedRequest, ServerConfig, ClientFinalizationMessage, ClientInitializationMessage, ClientPacketMessage, ClientSingleResquestMessage, RequestType, decompress, compress, ClientBatchMessage, ServerSingleResponseMessage, ServerBatchedMessage } from "../common/index.ts";
+import { send_response, send_batch, send_response_blocking, send_single } from "../helpers/index.ts";
+import { ZethaClient } from "../client/client.ts";
 
 
-system.afterEvents.scriptEventReceive.subscribe(e => {
-  if (!EnchantedClient.running_client || !(EnchantedClient.running_client instanceof EnchantedServer)) return;
 
-  const client = EnchantedClient.running_client;
-  let message: any;
-  switch (e.id) {
-    case RequestType.Initialization: {
-      message = ClientInitializationMessage.from(e.message);
-      break;
-    }
-    case RequestType.PacketData: {
-      message = ClientPacketMessage.from(e.message);
-      break;
-    }
-    case RequestType.Finalization: {
-      message = ClientFinalizationMessage.from(e.message);
-      break;
-    }
-    case RequestType.BatchRequest: {
-      const decompressed_message = decompress(e.message);
-      const message = ClientBatchMessage.from(decompressed_message);
-      if (message.client_id != client.config.uuid) return;
-      client.receive_client_batch(message);
-      return;
-    }
-    case RequestType.SingleRequest: {
-      message = ClientSingleResquestMessage.from(e.message);
-      break;
-    }
-    default: return;
-  }
-  if (message.server_id != client.config.uuid) return;
-  client.send_request({
-    body: message?.content ?? '',
-    client_id: message.client_id,
-    server_id: message.server_id,
-    request_index: message.request_index,
-    type: e.id
-  });
-
-});
-
-
-export interface ServerConfig extends ClientConfig {
-  block_request: boolean;
-}
 //a server can be a client as well
-export class EnchantedServer extends EnchantedClient {
+export class ZethaServer extends ZethaClient {
 
-  static requests: Map<string, Map<number, EnchantedRequest>> = new Map;
+  static requests: Map<string, Map<number, ZethaRequest>> = new Map;
   config: ServerConfig;
   constructor(config: ServerConfig) {
     super(config);
@@ -80,9 +27,6 @@ export class EnchantedServer extends EnchantedClient {
         this.receive_client_packet(req);
         break;
       }
-      case RequestType.BatchRequest: {
-        break;
-      }
       case RequestType.Finalization: {
         this.receive_client_finalization(req);
       }
@@ -96,7 +40,7 @@ export class EnchantedServer extends EnchantedClient {
     const decompressed = decompress(req.body);
     this.handle_request(decompressed, req.client_id, req.request_index).then(res => {
       const response = compress(res);
-      if (response.length > SIZE_LIMIT) {
+      if (response.length > MessageInfo.SizeLimit) {
         send_response(response, req.client_id, req.request_index);
       } else {
         const server_message = new ServerSingleResponseMessage(req.client_id, req.request_index, response);
@@ -111,9 +55,9 @@ export class EnchantedServer extends EnchantedClient {
    */
   public receive_initialization(req: ReceivedRequest) {
     if (this.config.uuid != req.server_id) return false;
-    const request = EnchantedServer.requests.get(req.client_id);
+    const request = ZethaServer.requests.get(req.client_id);
     if (request) request.set(req.request_index, { content: [] })
-    else EnchantedServer.requests.set(req.client_id, new Map([[req.request_index, { content: [] }]]));
+    else ZethaServer.requests.set(req.client_id, new Map([[req.request_index, { content: [] }]]));
     return true;
   }
 
@@ -123,7 +67,7 @@ export class EnchantedServer extends EnchantedClient {
    * @obs The content of the message is compressed
    */
   public receive_client_packet(req: ReceivedRequest) {
-    const request = EnchantedServer.requests.get(req.client_id)?.get(req.request_index);
+    const request = ZethaServer.requests.get(req.client_id)?.get(req.request_index);
     if (!request) throw new Error(`Not recognized client with id: ${req.client_id} with id ${req.request_index}`);
     request.content.push(req.body);
     return true;
@@ -146,7 +90,7 @@ export class EnchantedServer extends EnchantedClient {
   private *handle_batch_nonblocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
     for (const request of message.requests) {
       yield void this.handle_request(request.body, message.client_id, request.id).then(response => {
-        if (response.length + server_message.len() > APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        if (response.length + server_message.len() > MessageInfo.ApproxUncompressedSize) {
           send_batch(server_message);
           server_message.reset();
         }
@@ -162,7 +106,7 @@ export class EnchantedServer extends EnchantedClient {
   public handle_batch_blocking(message: ClientBatchMessage, server_message: ServerBatchedMessage) {
     for (const request of message.requests) {
       this.handle_request(request.body, message.client_id, request.id).then(response => {
-        if (response.length + server_message.len() > APPROXIMATED_UNCOMPRESSED_LIMIT) {
+        if (response.length + server_message.len() > MessageInfo.ApproxUncompressedSize) {
           send_batch(server_message);
           server_message.reset();
         }
@@ -176,7 +120,7 @@ export class EnchantedServer extends EnchantedClient {
    * @param req The message sent by the client with information about the request.
    */
   public receive_client_finalization(req: ReceivedRequest) {
-    const request = EnchantedServer.requests.get(req.client_id);
+    const request = ZethaServer.requests.get(req.client_id);
     if (!request) throw new Error(`Not recognized client: ${req.client_id}`);
 
     const content = decompress(request.get(req.request_index)!.content.join(''));
@@ -194,7 +138,48 @@ export class EnchantedServer extends EnchantedClient {
   }
 
   async handle(obj: any, client: string, req_id: number): Promise<any> {
-    return "Todo! Enchanted Server default handle function is meant to be overwritten"
+    return "Todo! Zetha Server default handle function is meant to be overwritten"
   }
+  listen() {
+    system.afterEvents.scriptEventReceive.subscribe(e => {
+      let message: any;
+      switch (e.id) {
+        case RequestType.Initialization: {
+          message = ClientInitializationMessage.from(e.message);
+          break;
+        }
+        case RequestType.PacketData: {
+          message = ClientPacketMessage.from(e.message);
+          break;
+        }
+        case RequestType.Finalization: {
+          message = ClientFinalizationMessage.from(e.message);
+          break;
+        }
+        case RequestType.BatchRequest: {
+          const decompressed_message = decompress(e.message);
+          const message = ClientBatchMessage.from(decompressed_message);
+          if (message.client_id != this.config.uuid) return;
+          this.receive_client_batch(message);
+          return;
+        }
+        case RequestType.SingleRequest: {
+          message = ClientSingleResquestMessage.from(e.message);
+          break;
+        }
+        default: return;
+      }
+      if (message.server_id != this.config.uuid) return;
+      this.send_request({
+        body: message?.content ?? '',
+        client_id: message.client_id,
+        server_id: message.server_id,
+        request_index: message.request_index,
+        type: e.id as any
+      });
 
+    });
+
+
+  }
 }

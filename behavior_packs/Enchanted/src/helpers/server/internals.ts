@@ -1,5 +1,5 @@
 import { system } from "@minecraft/server";
-import { ResponseType } from "../../common/types";
+
 import { ServerBatchedMessage, ServerFinalizeMessage, ServerPacketMessage, ServerSingleResponseMessage } from "../../common/messages/server.ts";
 import { SIZE_LIMIT, REQUEST_AMOUNT_LIMIT, APPROXIMATED_UNCOMPRESSED_LIMIT } from "@zetha/constants";
 import { compress } from "../../common/compression/index.ts";

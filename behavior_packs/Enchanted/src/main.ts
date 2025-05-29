@@ -4,13 +4,13 @@ import { QueuedRouteServer } from "./server/routed/queued.ts";
 import { CachingOption } from "./common/typings/client";
 import { RouteServerController } from "./server/routed/controller";
 import { Route } from "./server/routed/decorators/route";
-import { Response } from "./common/Response.ts";
+
 
 system.run(() => world.setDynamicProperty('suamae', 'é muito legal cara, amo ela'));
 
 export class Controller extends RouteServerController {
 
-  @Route("/suamae/:id")
+  @Route("/example/:id")
   async awaited(body: any, params: Record<string, string>, client: string, id: number) {
     console.log("Server received param: ", params.id);
     console.log("Imma wait 2 seconds, idc");
